@@ -37,10 +37,12 @@
                 statusTarget.innerText = "正在搜尋裝置...";
                 
                 // 1. 請求裝置
-                const device = await navigator.bluetooth.requestDevice({
-                    filters: [{ name: 'Pi_LED_Remote' }],
-                    optionalServices: [SERVICE_UUID]
-                });
+                // 將原本的 filters 改成這行，這會搜尋附近所有裝置
+            const device = await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: [SERVICE_UUID]
+            });
+
 
                 // 2. 連線至 GATT 伺服器
                 statusTarget.innerText = "正在連線伺服器...";
