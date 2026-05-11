@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pi 藍牙控制器</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding-top: 50px; background: #f4f4f9; }
+        button { padding: 15px 30px; font-size: 18px; margin: 10px; cursor: pointer; border-radius: 8px; border: none; }
+        .connect { background-color: #4A90E2; color: white; }
+        .on { background-color: #44db5e; color: white; }
+        .off { background-color: #ff3b30; color: white; }
+        #status { margin-top: 20px; color: #666; }
+    </style>
+</head>
+<body>
+
+    <h2>Raspberry Pi 5 LED 控制</h2>
+    
+    <button class="connect" onclick="connectBLE()">1. 連線至樹莓派</button>
+    <br>
+    <button class="on" onclick="sendControl('1')">開啟 LED</button>
+    <button class="off" onclick="sendControl('0')">關閉 LED</button>
+
+    <div id="status">狀態：等待連線...</div>
+
+    <script>
+        // 你的樹莓派 UUID
+        const SERVICE_UUID = '12345678-1234-5678-1234-567812345678';
+        const CHAR_UUID = '87654321-4321-8765-4321-876543210987';
+
+        let ledCharacteristic = null;
+
+        async function connectBLE() {
+            const statusTarget = document.getElementById('status');
+            try {
+                statusTarget.innerText = "正在搜尋裝置...";
+                
+                // 1. 請求裝置
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'Pi_LED_Remote' }],
+                    optionalServices: [SERVICE_UUID]
+                });
+
+                // 2. 連線至 GATT 伺服器
+                statusTarget.innerText = "正在連線伺服器...";
+                const server = await device.gatt.connect();
+
+                // 3. 取得服務
+                const service = await server.getPrimaryService(SERVICE_UUID);
+
+                // 4. 取得特徵值
+                ledCharacteristic = await service.getCharacteristic(CHAR_UUID);
+
+                statusTarget.innerText = "✅ 連線成功！可以控制燈號了。";
+            } catch (error) {
+                statusTarget.innerText = "❌ 錯誤: " + error;
+                console.error(error);
+            }
+        }
+
+        async function sendControl(val) {
+            if (!ledCharacteristic) {
+                alert("請先連線至樹莓派！");
+                return;
+            }
+            try {
+                // 將字串轉為 ArrayBuffer 發送
+                const encoder = new TextEncoder();
+                await ledCharacteristic.writeValue(encoder.encode(val));
+                console.log("發送指令: " + val);
+            } catch (error) {
+                alert("傳送失敗: " + error);
+            }
+        }
+    </script>
+</body>
+</html>
