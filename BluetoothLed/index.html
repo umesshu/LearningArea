@@ -3,74 +3,83 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pi 藍牙控制器</title>
+    <title>RPi 藍牙控制面板</title>
     <style>
-        body { font-family: sans-serif; text-align: center; padding-top: 50px; background: #f4f4f9; }
-        button { padding: 15px 30px; font-size: 18px; margin: 10px; cursor: pointer; border-radius: 8px; border: none; }
-        .connect { background-color: #4A90E2; color: white; }
-        .on { background-color: #44db5e; color: white; }
-        .off { background-color: #ff3b30; color: white; }
-        #status { margin-top: 20px; color: #666; }
+        :root { --primary: #007AFF; --success: #34C759; --danger: #FF3B30; --bg: #F2F2F7; }
+        body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 85%; max-width: 350px; text-align: center; }
+        h2 { margin-bottom: 25px; color: #1c1c1e; }
+        button { width: 100%; padding: 16px; font-size: 18px; font-weight: 600; border-radius: 12px; border: none; margin-bottom: 12px; transition: all 0.2s; cursor: pointer; }
+        button:active { transform: scale(0.97); opacity: 0.8; }
+        .btn-connect { background: var(--primary); color: white; }
+        .btn-on { background: var(--success); color: white; }
+        .btn-off { background: var(--danger); color: white; }
+        #status { font-size: 14px; color: #8e8e93; margin-top: 15px; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
 
-    <h2>Raspberry Pi 5 LED 控制</h2>
-    
-    <button class="connect" onclick="connectBLE()">1. 連線至樹莓派</button>
-    <br>
-    <button class="on" onclick="sendControl('1')">開啟 LED</button>
-    <button class="off" onclick="sendControl('0')">關閉 LED</button>
+    <div class="card">
+        <h2>Pi 5 控制中心</h2>
+        
+        <button id="connectBtn" class="btn-connect" onclick="connectBLE()">1. 連線至樹莓派</button>
 
-    <div id="status">狀態：等待連線...</div>
+        <div id="controlPanel" class="hidden">
+            <button class="btn-on" onclick="sendControl('1')">點亮 LED</button>
+            <button class="btn-off" onclick="sendControl('0')">關閉 LED</button>
+        </div>
+
+        <div id="status">等待連線中...</div>
+    </div>
 
     <script>
-        // 你的樹莓派 UUID
+        // 與您的 Python 程式碼 UUID 嚴格對應
         const SERVICE_UUID = '12345678-1234-5678-1234-567812345678';
-        const CHAR_UUID = '87654321-4321-8765-4321-876543210987';
+        const CHAR_UUID    = '87654321-4321-8765-4321-876543210987';
 
         let ledCharacteristic = null;
 
         async function connectBLE() {
-            const statusTarget = document.getElementById('status');
+            const statusEl = document.getElementById('status');
+            const controlPanel = document.getElementById('controlPanel');
+            const connectBtn = document.getElementById('connectBtn');
+
             try {
-                statusTarget.innerText = "正在搜尋裝置...";
-                
-                // 1. 請求裝置
-                // 將原本的 filters 改成這行，這會搜尋附近所有裝置
-            const device = await navigator.bluetooth.requestDevice({
-            acceptAllDevices: true,
-            optionalServices: [SERVICE_UUID]
-            });
+                statusEl.innerText = "正在搜尋裝置...";
 
+                // 為了防止清單空白，使用 acceptAllDevices 並過濾可用的 Service
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: [SERVICE_UUID]
+                });
 
-                // 2. 連線至 GATT 伺服器
-                statusTarget.innerText = "正在連線伺服器...";
+                statusEl.innerText = `正在連線至 ${device.name || '裝置'}...`;
                 const server = await device.gatt.connect();
 
-                // 3. 取得服務
+                statusEl.innerText = "正在取得服務...";
                 const service = await server.getPrimaryService(SERVICE_UUID);
 
-                // 4. 取得特徵值
+                statusEl.innerText = "正在綁定特徵值...";
                 ledCharacteristic = await service.getCharacteristic(CHAR_UUID);
 
-                statusTarget.innerText = "✅ 連線成功！可以控制燈號了。";
+                statusEl.innerText = "✅ 連線成功！";
+                controlPanel.classList.remove('hidden');
+                connectBtn.innerText = "重新連線";
+                
             } catch (error) {
-                statusTarget.innerText = "❌ 錯誤: " + error;
+                statusEl.innerText = "❌ 失敗: " + error.message;
                 console.error(error);
             }
         }
 
         async function sendControl(val) {
-            if (!ledCharacteristic) {
-                alert("請先連線至樹莓派！");
-                return;
-            }
+            if (!ledCharacteristic) return;
             try {
-                // 將字串轉為 ArrayBuffer 發送
                 const encoder = new TextEncoder();
+                // 傳送 UTF-8 字串 '1' 或 '0'
                 await ledCharacteristic.writeValue(encoder.encode(val));
-                console.log("發送指令: " + val);
+                document.getElementById('status').innerText = `指令 [${val}] 已送出`;
             } catch (error) {
                 alert("傳送失敗: " + error);
             }
