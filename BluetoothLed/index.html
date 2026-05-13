@@ -1,212 +1,103 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pi5 LED 控制</title>
+    <title>Pi5 LED 控制程式</title>
     <style>
-        body {
-            font-family: -apple-system, sans-serif;
-            background: #F2F2F7;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 40px 20px;
-        }
-
-        .card {
-            background: white;
-            padding: 30px;
-            border-radius: 24px;
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.08);
-            width: 100%;
-            max-width: 320px;
-            text-align: center;
-        }
-
-        h3 {
-            margin-bottom: 20px;
-            color: #1c1c1e;
-        }
-
-        button {
-            width: 100%;
-            padding: 16px;
-            margin: 10px 0;
-            border: none;
-            border-radius: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: 0.2s;
-            font-size: 16px;
-        }
-
-        /* 不同狀態的按鈕顏色 */
-        .btn-primary {
-            background: #007AFF;
-            color: white;
-        }
-
-        .btn-device {
-            background: #E5E5EA;
-            color: #007AFF;
-        }
-
-        .btn-last-device {
-            background: #34C759;
-            color: white;
-            border: 2px solid #248a3d;
-        }
-
-        /* 上次裝置用綠色 */
-        .btn-on {
-            background: #34C759;
-            color: white;
-        }
-
-        .btn-off {
-            background: #FF3B30;
-            color: white;
-        }
-
-        #lastDeviceText {
-            font-size: 13px;
-            color: #8e8e93;
-            margin-top: 10px;
-        }
-
-        #status {
-            font-size: 14px;
-            color: #007AFF;
-            margin: 15px 0;
-            font-weight: 500;
-        }
-
-        .hidden {
-            display: none;
-        }
+        body { font-family: -apple-system, sans-serif; background: #F2F2F7; display: flex; flex-direction: column; align-items: center; padding-top: 60px; }
+        .card { background: white; padding: 30px; border-radius: 24px; box-shadow: 0 8px 25px rgba(0,0,0,0.08); width: 85%; max-width: 320px; text-align: center; }
+        button { width: 100%; padding: 16px; margin: 10px 0; border: none; border-radius: 14px; font-weight: 600; cursor: pointer; transition: 0.2s; font-size: 17px; }
+        .btn-scan { background: #007AFF; color: white; }
+        .btn-on { background: #34C759; color: white; }
+        .btn-off { background: #FF3B30; color: white; }
+        .btn-back { background: #E5E5EA; color: #1c1c1e; margin-top: 20px; font-size: 14px; }
+        #lastDeviceText { font-size: 14px; color: #8e8e93; margin-top: 15px; }
+        #status { font-size: 13px; color: #007AFF; margin-top: 10px; min-height: 1.2em; }
+        .hidden { display: none; }
     </style>
 </head>
-
 <body>
 
     <div class="card">
-        <div id="step1">
-            <h3>Pi5 LED 控制程式</h3>
-            <button class="btn-primary" onclick="startDiscovery()">掃描裝置</button>
-            <div id="lastDeviceText">檢查紀錄中...</div>
+        <div id="initSection">
+            <h2>Pi5 LED 控制程式</h2>
+            <button class="btn-scan" onclick="handleScan()">掃描裝置</button>
+            <div id="lastDeviceText">檢查歷史紀錄...</div>
         </div>
 
-        <div id="step2" class="hidden">
-            <h3>連線藍芽至哪一個裝置?</h3>
-            <div id="deviceList"></div>
-            <button style="background:none; color:#007AFF; font-size:14px; text-decoration:underline;"
-                onclick="requestNew()">找不到裝置？搜尋全新設備</button>
-        </div>
-
-        <div id="step3" class="hidden">
-            <h3 id="connectedName">已連線</h3>
-            <button class="btn-on" onclick="send('1')">點亮 LED</button>
-            <button class="btn-off" onclick="send('0')">關閉 LED</button>
-            <button style="background:#eee; color:#666;" onclick="location.reload()">中斷並返回</button>
+        <div id="controlSection" class="hidden">
+            <h3 id="targetName">已連線</h3>
+            <button class="btn-on" onclick="sendControl('1')">點亮 LED</button>
+            <button class="btn-off" onclick="sendControl('0')">關閉 LED</button>
+            <button class="btn-back" onclick="location.reload()">中斷並返回</button>
         </div>
 
         <div id="status"></div>
     </div>
 
     <script>
-        const S_UUID = '12345678-1234-5678-1234-567812345678';
-        const C_UUID = '87654321-4321-8765-4321-876543210987';
-        let ledChar = null;
+        const SERVICE_UUID = '12345678-1234-5678-1234-567812345678';
+        const CHAR_UUID    = '87654321-4321-8765-4321-876543210987';
+        let ledCharacteristic = null;
 
-        // 頁面加載：顯示上次連線紀錄
+        // 頁面開啟時讀取上次連線紀錄
         window.onload = () => {
             const last = localStorage.getItem('lastDeviceName');
-            document.getElementById('lastDeviceText').innerText = last ? `上次連線裝置是 ${last}` : "無歷史連線紀錄";
+            document.getElementById('lastDeviceText').innerText = last ? `上次連線裝置是 ${last}` : "尚無連線紀錄";
         };
 
-        // 按下「掃描裝置」：顯示清單
-        async function startDiscovery() {
-            document.getElementById('step1').classList.add('hidden');
-            document.getElementById('step2').classList.remove('hidden');
-            renderDeviceButtons();
-        }
-
-        async function renderDeviceButtons() {
-            const list = document.getElementById('deviceList');
-            list.innerHTML = '';
-
-            if (navigator.bluetooth.getDevices) {
-                const devices = await navigator.bluetooth.getDevices();
-                const last = localStorage.getItem('lastDeviceName');
-
-                // 只過濾有名字的
-                devices.filter(d => d.name).forEach(device => {
-                    const btn = document.createElement('button');
-                    // 如果是上次連線的裝置，顏色變綠色
-                    if (device.name === last) {
-                        btn.className = 'btn-last-device';
-                        btn.innerText = `⭐ ${device.name} (上次)`;
-                    } else {
-                        btn.className = 'btn-device';
-                        btn.innerText = device.name;
-                    }
-                    btn.onclick = () => connect(device);
-                    list.appendChild(btn);
+        // 步驟 2: 按下掃描並篩選
+        async function handleScan() {
+            const statusEl = document.getElementById('status');
+            try {
+                statusEl.innerText = "正在開啟掃描視窗...";
+                
+                // 核心改進：只篩選具備我們特定 Service UUID 的裝置
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [SERVICE_UUID] }]
                 });
+
+                await connectToDevice(device);
+            } catch (error) {
+                statusEl.innerText = "取消掃描或發生錯誤";
+                console.error(error);
             }
         }
 
-        // 搜尋全新裝置 (會跳出 iOS 系統選單)
-        async function requestNew() {
+        async function connectToDevice(device) {
+            const statusEl = document.getElementById('status');
             try {
-                // 核心改變：不再接受所有裝置，只找「有提供我們專屬服務 UUID」的裝置
-                const dev = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        { services: [S_UUID] } // 這行最關鍵：只有廣播這個 UUID 的裝置才會出現
-                    ]
-                    // 注意：使用 filters 時，不可以寫 acceptAllDevices: true
-                });
-                await connect(dev);
-            } catch (e) {
-                console.log("使用者取消了掃描");
-            }
-        }
-
-        async function connect(device) {
-            const status = document.getElementById('status');
-            try {
-                status.innerText = "連線中...";
+                statusEl.innerText = `正在連線 ${device.name}...`;
+                
                 const server = await device.gatt.connect();
-                const service = await server.getPrimaryService(S_UUID);
-                ledChar = await service.getCharacteristic(C_UUID);
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                ledCharacteristic = await service.getCharacteristic(CHAR_UUID);
 
-                // 紀錄本次成功連線的裝置名
+                // 紀錄成功連線的裝置名字
                 localStorage.setItem('lastDeviceName', device.name);
 
-                // 進入控制畫面
-                document.getElementById('step2').classList.add('hidden');
-                document.getElementById('step3').classList.remove('hidden');
-                document.getElementById('connectedName').innerText = `控制: ${device.name}`;
-                status.innerText = "✅ 連線成功";
+                // 切換畫面
+                document.getElementById('initSection').classList.add('hidden');
+                document.getElementById('controlSection').classList.remove('hidden');
+                document.getElementById('targetName').innerText = `控制: ${device.name}`;
+                statusEl.innerText = "✅ 連線成功";
             } catch (err) {
-                status.innerText = "❌ 連線失敗，請重試";
+                statusEl.innerText = "❌ 連線失敗";
                 console.error(err);
             }
         }
 
-        async function send(val) {
-            if (!ledChar) return;
+        async function sendControl(val) {
+            if (!ledCharacteristic) return;
             try {
-                await ledChar.writeValue(new TextEncoder().encode(val));
+                await ledCharacteristic.writeValue(new TextEncoder().encode(val));
                 document.getElementById('status').innerText = `指令 [${val}] 已送出`;
             } catch (e) {
-                alert("連線已失效");
+                alert("連線中斷");
                 location.reload();
             }
         }
     </script>
 </body>
-
 </html>
