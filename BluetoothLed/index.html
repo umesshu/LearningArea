@@ -1,26 +1,83 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pi 智慧控制面板</title>
     <style>
-        :root { --primary: #007AFF; --success: #34C759; --danger: #FF3B30; --bg: #F2F2F7; }
-        body { font-family: -apple-system, sans-serif; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 85%; max-width: 350px; text-align: center; }
-        button { width: 100%; padding: 16px; font-size: 18px; font-weight: 600; border-radius: 12px; border: none; margin-bottom: 12px; cursor: pointer; transition: 0.2s; }
-        .btn-connect { background: var(--primary); color: white; }
-        .btn-on { background: var(--success); color: white; }
-        .btn-off { background: var(--danger); color: white; }
-        #status { font-size: 14px; color: #8e8e93; margin-top: 15px; }
-        .hidden { display: none; }
+        :root {
+            --primary: #007AFF;
+            --success: #34C759;
+            --danger: #FF3B30;
+            --bg: #F2F2F7;
+        }
+
+        body {
+            font-family: -apple-system, sans-serif;
+            background: var(--bg);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .card {
+            background: white;
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            width: 85%;
+            max-width: 350px;
+            text-align: center;
+        }
+
+        button {
+            width: 100%;
+            padding: 16px;
+            font-size: 18px;
+            font-weight: 600;
+            border-radius: 12px;
+            border: none;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .btn-connect {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-on {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-off {
+            background: var(--danger);
+            color: white;
+        }
+
+        #status {
+            font-size: 14px;
+            color: #8e8e93;
+            margin-top: 15px;
+        }
+
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
+
 <body>
 
     <div class="card">
         <h2 id="title">Pi 5 控制中心</h2>
-        
+
         <button id="actionBtn" class="btn-connect" onclick="handleButtonClick()">點擊連線</button>
 
         <div id="controlPanel" class="hidden">
@@ -33,7 +90,7 @@
 
     <script>
         const SERVICE_UUID = '12345678-1234-5678-1234-567812345678';
-        const CHAR_UUID    = '87654321-4321-8765-4321-876543210987';
+        const CHAR_UUID = '87654321-4321-8765-4321-876543210987';
 
         let ledCharacteristic = null;
         let rememberedDevice = null;
@@ -75,8 +132,19 @@
         async function connectToDevice(device) {
             const statusEl = document.getElementById('status');
             try {
-                statusEl.innerText = "正在重新綁定通道...";
-                const server = await device.gatt.connect();
+                statusEl.innerText = "正在檢查裝置狀態...";
+
+                // 1. 如果裝置其實已經連上了，直接抓取服務
+                let server;
+                if (device.gatt.connected) {
+                    server = device.gatt;
+                } else {
+                    // 2. 否則才執行連線動作
+                    statusEl.innerText = "正在恢復硬體連線...";
+                    server = await device.gatt.connect();
+                }
+
+                statusEl.innerText = "正在綁定通道...";
                 const service = await server.getPrimaryService(SERVICE_UUID);
                 ledCharacteristic = await service.getCharacteristic(CHAR_UUID);
 
@@ -85,7 +153,9 @@
                 document.getElementById('actionBtn').classList.add('hidden');
             } catch (error) {
                 statusEl.innerText = "❌ 重連失敗: " + error.message;
-                rememberedDevice = null; // 失敗就清除，下次重新掃描
+                console.error("錯誤詳情:", error);
+                // 如果失敗，建議使用者手動關開藍牙
+                alert("請嘗試關閉並重新開啟 iPhone 藍牙，再點擊連線。");
             }
         }
 
@@ -102,4 +172,5 @@
         }
     </script>
 </body>
+
 </html>
