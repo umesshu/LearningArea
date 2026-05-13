@@ -3,14 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RPi 藍牙控制面板</title>
+    <title>Pi 智慧控制面板</title>
     <style>
         :root { --primary: #007AFF; --success: #34C759; --danger: #FF3B30; --bg: #F2F2F7; }
-        body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
         .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 85%; max-width: 350px; text-align: center; }
-        h2 { margin-bottom: 25px; color: #1c1c1e; }
-        button { width: 100%; padding: 16px; font-size: 18px; font-weight: 600; border-radius: 12px; border: none; margin-bottom: 12px; transition: all 0.2s; cursor: pointer; }
-        button:active { transform: scale(0.97); opacity: 0.8; }
+        button { width: 100%; padding: 16px; font-size: 18px; font-weight: 600; border-radius: 12px; border: none; margin-bottom: 12px; cursor: pointer; transition: 0.2s; }
         .btn-connect { background: var(--primary); color: white; }
         .btn-on { background: var(--success); color: white; }
         .btn-off { background: var(--danger); color: white; }
@@ -21,55 +19,73 @@
 <body>
 
     <div class="card">
-        <h2>Pi 5 控制中心</h2>
+        <h2 id="title">Pi 5 控制中心</h2>
         
-        <button id="connectBtn" class="btn-connect" onclick="connectBLE()">1. 連線至樹莓派X</button>
+        <button id="actionBtn" class="btn-connect" onclick="handleButtonClick()">點擊連線</button>
 
         <div id="controlPanel" class="hidden">
             <button class="btn-on" onclick="sendControl('1')">點亮 LED</button>
             <button class="btn-off" onclick="sendControl('0')">關閉 LED</button>
         </div>
 
-        <div id="status">等待連線中...</div>
+        <div id="status">正在檢查先前連線...</div>
     </div>
 
     <script>
-        // 與您的 Python 程式碼 UUID 嚴格對應
         const SERVICE_UUID = '12345678-1234-5678-1234-567812345678';
         const CHAR_UUID    = '87654321-4321-8765-4321-876543210987';
 
         let ledCharacteristic = null;
+        let rememberedDevice = null;
 
-        async function connectBLE() {
-            const statusEl = document.getElementById('status');
-            const controlPanel = document.getElementById('controlPanel');
-            const connectBtn = document.getElementById('connectBtn');
+        // 頁面載入時：檢查有沒有記住的裝置
+        window.onload = async () => {
+            if (navigator.bluetooth.getDevices) {
+                const devices = await navigator.bluetooth.getDevices();
+                if (devices.length > 0) {
+                    rememberedDevice = devices[0];
+                    document.getElementById('status').innerText = `發現已配對裝置: ${rememberedDevice.name}`;
+                    document.getElementById('actionBtn').innerText = "快速重連";
+                }
+            }
+        };
 
+        async function handleButtonClick() {
+            if (rememberedDevice) {
+                // 如果有記住的裝置，直接連線，不跳掃描視窗
+                await connectToDevice(rememberedDevice);
+            } else {
+                // 否則開啟全新掃描
+                await requestNewDevice();
+            }
+        }
+
+        async function requestNewDevice() {
             try {
-                statusEl.innerText = "正在搜尋裝置...";
-
-                // 為了防止清單空白，使用 acceptAllDevices 並過濾可用的 Service
                 const device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [SERVICE_UUID]
                 });
+                await connectToDevice(device);
+            } catch (e) {
+                console.log(e);
+            }
+        }
 
-                statusEl.innerText = `正在連線至 ${device.name || '裝置'}...`;
+        async function connectToDevice(device) {
+            const statusEl = document.getElementById('status');
+            try {
+                statusEl.innerText = "正在重新綁定通道...";
                 const server = await device.gatt.connect();
-
-                statusEl.innerText = "正在取得服務...";
                 const service = await server.getPrimaryService(SERVICE_UUID);
-
-                statusEl.innerText = "正在綁定特徵值...";
                 ledCharacteristic = await service.getCharacteristic(CHAR_UUID);
 
-                statusEl.innerText = "✅ 連線成功！";
-                controlPanel.classList.remove('hidden');
-                connectBtn.innerText = "重新連線";
-                
+                statusEl.innerText = "✅ 已恢復連線";
+                document.getElementById('controlPanel').classList.remove('hidden');
+                document.getElementById('actionBtn').classList.add('hidden');
             } catch (error) {
-                statusEl.innerText = "❌ 失敗: " + error.message;
-                console.error(error);
+                statusEl.innerText = "❌ 重連失敗: " + error.message;
+                rememberedDevice = null; // 失敗就清除，下次重新掃描
             }
         }
 
@@ -77,11 +93,11 @@
             if (!ledCharacteristic) return;
             try {
                 const encoder = new TextEncoder();
-                // 傳送 UTF-8 字串 '1' 或 '0'
                 await ledCharacteristic.writeValue(encoder.encode(val));
                 document.getElementById('status').innerText = `指令 [${val}] 已送出`;
             } catch (error) {
-                alert("傳送失敗: " + error);
+                alert("連線已中斷，請重整網頁");
+                location.reload();
             }
         }
     </script>
