@@ -3,156 +3,89 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pi 智慧控制中心</title>
+    <title>Pi 控制極速版</title>
     <style>
-        :root { --primary: #007AFF; --success: #34C759; --danger: #FF3B30; --bg: #F2F2F7; }
-        body { font-family: -apple-system, sans-serif; background: var(--bg); display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; padding-top: 50px; }
-        .card { background: white; padding: 25px; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 85%; max-width: 360px; text-align: center; }
-        
-        .main-btn { width: 100%; padding: 16px; font-size: 16px; font-weight: 600; border-radius: 14px; border: none; margin-bottom: 12px; cursor: pointer; transition: 0.2s; }
-        .btn-scan { background: var(--primary); color: white; }
-        .btn-device { background: white; color: var(--primary); border: 2px solid var(--primary); margin-top: 5px; }
-        .btn-device:active { background: #e5f1ff; }
-        
-        .btn-on { background: var(--success); color: white; }
-        .btn-off { background: var(--danger); color: white; }
-        .btn-reset { background: transparent; color: #8e8e93; font-size: 13px; text-decoration: underline; margin-top: 20px; }
-
-        .device-list-container { margin: 20px 0; border-top: 1px solid #eee; padding-top: 15px; }
-        .list-label { font-size: 12px; color: #8e8e93; text-align: left; margin-bottom: 10px; padding-left: 5px; }
-        
-        #status { font-size: 14px; color: #8e8e93; margin: 15px 0; padding: 10px; background: #f9f9f9; border-radius: 8px; }
+        body { font-family: -apple-system, sans-serif; background: #F2F2F7; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; }
+        .card { background: white; padding: 25px; border-radius: 20px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); width: 100%; max-width: 320px; text-align: center; }
+        button { width: 100%; padding: 15px; margin: 8px 0; border: none; border-radius: 12px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+        .btn-blue { background: #007AFF; color: white; }
+        .btn-green { background: #34C759; color: white; }
+        .btn-red { background: #FF3B30; color: white; }
+        .btn-outline { background: white; color: #007AFF; border: 1.5px solid #007AFF; }
+        #status { font-size: 13px; color: #8e8e93; margin: 15px 0; }
         .hidden { display: none; }
-        .loading { opacity: 0.6; pointer-events: none; }
     </style>
 </head>
 <body>
 
     <div class="card">
-        <h2>Pi 5 控制中心</h2>
+        <h3>Pi 5 控制中心</h3>
+        <div id="status">準備就緒</div>
         
-        <button id="scanBtn" class="main-btn btn-scan" onclick="requestNewDevice()">🔍 搜尋新裝置</button>
-        
-        <div id="status">正在檢查已配對裝置...</div>
-
-        <div id="deviceListArea" class="device-list-container hidden">
-            <div class="list-label">已配對的裝置 (點擊即可連線):</div>
-            <div id="buttonContainer"></div>
+        <div id="initSection">
+            <button class="btn-blue" onclick="scan()">🔍 搜尋新裝置</button>
+            <div id="quickBtns"></div>
         </div>
 
-        <div id="controlPanel" class="hidden">
-            <div style="margin: 20px 0; font-weight: bold; color: var(--success);">● 已連線</div>
-            <button class="main-btn btn-on" onclick="sendControl('1')">點亮 LED</button>
-            <button class="main-btn btn-off" onclick="sendControl('0')">關閉 LED</button>
+        <div id="ctrlSection" class="hidden">
+            <button class="btn-green" onclick="send('1')">點亮 LED</button>
+            <button class="btn-red" onclick="send('0')">關閉 LED</button>
+            <button style="background:#eee; color:#666;" onclick="location.reload()">斷開連線</button>
         </div>
-
-        <button id="reloadBtn" class="btn-reset" onclick="location.reload()">重新整理頁面</button>
     </div>
 
     <script>
-        const SERVICE_UUID = '12345678-1234-5678-1234-567812345678';
-        const CHAR_UUID    = '87654321-4321-8765-4321-876543210987';
+        const S_UUID = '12345678-1234-5678-1234-567812345678';
+        const C_UUID = '87654321-4321-8765-4321-876543210987';
+        let ledChar = null;
 
-        let ledCharacteristic = null;
-
-        window.onload = () => {
-            refreshDeviceList();
+        // 頁面開啟後，自動列出有名字的舊裝置
+        window.onload = async () => {
+            if (navigator.bluetooth.getDevices) {
+                const devices = await navigator.bluetooth.getDevices();
+                // 關鍵：過濾掉沒有名字的裝置
+                const namedDevices = devices.filter(d => d.name);
+                
+                namedDevices.forEach(d => {
+                    const b = document.createElement('button');
+                    b.className = 'btn-outline';
+                    b.innerText = `連線至 ${d.name}`;
+                    b.onclick = () => connect(d);
+                    document.getElementById('quickBtns').appendChild(b);
+                });
+            }
         };
 
-        // 核心改進：獲取所有已配對裝置並生成按鈕 
-        async function refreshDeviceList() {
-            const container = document.getElementById('buttonContainer');
-            const listArea = document.getElementById('deviceListArea');
-            const statusEl = document.getElementById('status');
-            container.innerHTML = ''; // 清空現有按鈕
-
-            if (navigator.bluetooth.getDevices) {
-                try {
-                    const devices = await navigator.bluetooth.getDevices();
-                    if (devices.length > 0) {
-                        listArea.classList.remove('hidden');
-                        statusEl.innerText = `發現 ${devices.length} 個已配對裝置`;
-                        
-                        devices.forEach(device => {
-                            // 為每個裝置建立一個按鈕
-                            const btn = document.createElement('button');
-                            btn.className = 'main-btn btn-device';
-                            btn.innerText = `⚡ 快速重連: ${device.name || '未知裝置'}`;
-                            btn.onclick = () => connectToDevice(device);
-                            container.appendChild(btn);
-                        });
-                    } else {
-                        statusEl.innerText = "尚未配對任何裝置，請先搜尋。";
-                        listArea.classList.add('hidden');
-                    }
-                } catch (e) {
-                    statusEl.innerText = "無法讀取裝置清單";
-                }
-            }
-        }
-
-        async function requestNewDevice() {
-            const statusEl = document.getElementById('status');
+        async function scan() {
             try {
-                // requestDevice 必定會跳出瀏覽器選擇視窗 [cite: 273, 278]
                 const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: [SERVICE_UUID]
+                    acceptAllDevices: true, optionalServices: [S_UUID]
                 });
-                
-                await connectToDevice(device);
-            } catch (e) {
-                statusEl.innerText = "已取消掃描";
-            }
+                await connect(device);
+            } catch (e) { console.log("取消掃描"); }
         }
 
-        async function connectToDevice(device) {
-            const statusEl = document.getElementById('status');
-            const scanBtn = document.getElementById('scanBtn');
-            const listArea = document.getElementById('deviceListArea');
-
+        async function connect(dev) {
+            const msg = document.getElementById('status');
             try {
-                statusEl.innerText = `正在連線 ${device.name}...`;
-                statusEl.classList.add('loading');
+                msg.innerText = "連線中...";
+                const server = await dev.gatt.connect();
+                const service = await server.getPrimaryService(S_UUID);
+                ledChar = await service.getCharacteristic(C_UUID);
                 
-                // 監聽斷線事件 
-                device.addEventListener('gattserverdisconnected', onDisconnected);
-
-                const server = await device.gatt.connect();
-                const service = await server.getPrimaryService(SERVICE_UUID);
-                ledCharacteristic = await service.getCharacteristic(CHAR_UUID);
-
-                statusEl.innerText = "✅ 已成功建立連線";
-                statusEl.classList.remove('loading');
-                
-                // UI 切換
-                document.getElementById('controlPanel').classList.remove('hidden');
-                scanBtn.classList.add('hidden');
-                listArea.classList.add('hidden');
-            } catch (error) {
-                console.error(error);
-                statusEl.innerText = "❌ 連線失敗，請確認樹莓派藍牙已開啟。";
-                statusEl.classList.remove('loading');
+                msg.innerText = "✅ 已連線: " + dev.name;
+                document.getElementById('initSection').classList.add('hidden');
+                document.getElementById('ctrlSection').classList.remove('hidden');
+            } catch (err) {
+                msg.innerText = "❌ 失敗，請重試";
+                console.error(err);
             }
         }
 
-        function onDisconnected(event) {
-            const device = event.target;
-            console.log(`裝置 ${device.name} 已斷開`);
-            alert("藍牙連線已中斷");
-            location.reload(); // 斷線後重整以回到初始狀態 
-        }
-
-        async function sendControl(val) {
-            if (!ledCharacteristic) return;
-            try {
-                const encoder = new TextEncoder();
-                await ledCharacteristic.writeValue(encoder.encode(val));
-                document.getElementById('status').innerText = `已送出指令: ${val === '1' ? '開燈' : '關燈'}`;
-            } catch (error) {
-                alert("指令傳送失敗，請重連");
-                location.reload();
-            }
+        async function send(val) {
+            if (!ledChar) return;
+            await ledChar.writeValue(new TextEncoder().encode(val));
+            document.getElementById('status').innerText = `指令 [${val}] 已送出`;
         }
     </script>
 </body>
