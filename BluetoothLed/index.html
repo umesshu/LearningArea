@@ -1,161 +1,125 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pi 智慧控制面板</title>
+    <title>Pi 智慧控制穩定版</title>
     <style>
-        :root {
-            --primary: #007AFF;
-            --success: #34C759;
-            --danger: #FF3B30;
-            --bg: #F2F2F7;
-        }
-
-        body {
-            font-family: -apple-system, sans-serif;
-            background: var(--bg);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-        }
-
-        .card {
-            background: white;
-            padding: 30px;
-            border-radius: 20px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-            width: 85%;
-            max-width: 350px;
-            text-align: center;
-        }
-
-        button {
-            width: 100%;
-            padding: 16px;
-            font-size: 18px;
-            font-weight: 600;
-            border-radius: 12px;
-            border: none;
-            margin-bottom: 12px;
-            cursor: pointer;
-            transition: 0.2s;
-        }
-
-        .btn-connect {
-            background: var(--primary);
-            color: white;
-        }
-
-        .btn-on {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-off {
-            background: var(--danger);
-            color: white;
-        }
-
-        #status {
-            font-size: 14px;
-            color: #8e8e93;
-            margin-top: 15px;
-        }
-
-        .hidden {
-            display: none;
-        }
+        :root { --primary: #007AFF; --success: #34C759; --danger: #FF3B30; --bg: #F2F2F7; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 85%; max-width: 350px; text-align: center; }
+        button { width: 100%; padding: 16px; font-size: 18px; font-weight: 600; border-radius: 12px; border: none; margin-bottom: 12px; cursor: pointer; transition: 0.2s; }
+        .btn-connect { background: var(--primary); color: white; }
+        .btn-on { background: var(--success); color: white; }
+        .btn-off { background: var(--danger); color: white; }
+        .btn-reset { background: #8e8e93; color: white; font-size: 14px; padding: 10px; }
+        #status { font-size: 14px; color: #8e8e93; margin-top: 15px; min-height: 20px; }
+        .hidden { display: none; }
     </style>
 </head>
-
 <body>
 
     <div class="card">
         <h2 id="title">Pi 5 控制中心</h2>
-
-        <button id="actionBtn" class="btn-connect" onclick="handleButtonClick()">點擊連線</button>
+        
+        <button id="actionBtn" class="btn-connect" onclick="handleButtonClick()">正在讀取狀態...</button>
 
         <div id="controlPanel" class="hidden">
             <button class="btn-on" onclick="sendControl('1')">點亮 LED</button>
             <button class="btn-off" onclick="sendControl('0')">關閉 LED</button>
         </div>
 
-        <div id="status">正在檢查先前連線...</div>
+        <div id="status">檢查連線歷史...</div>
+        
+        <button id="resetBtn" class="btn-reset hidden" onclick="requestNewDevice()">清除快取並重新掃描</button>
     </div>
 
     <script>
         const SERVICE_UUID = '12345678-1234-5678-1234-567812345678';
-        const CHAR_UUID = '87654321-4321-8765-4321-876543210987';
+        const CHAR_UUID    = '87654321-4321-8765-4321-876543210987';
 
         let ledCharacteristic = null;
         let rememberedDevice = null;
 
-        // 頁面載入時：檢查有沒有記住的裝置
         window.onload = async () => {
+            await checkRememberedDevices();
+        };
+
+        async function checkRememberedDevices() {
+            const statusEl = document.getElementById('status');
+            const actionBtn = document.getElementById('actionBtn');
+            
             if (navigator.bluetooth.getDevices) {
                 const devices = await navigator.bluetooth.getDevices();
                 if (devices.length > 0) {
                     rememberedDevice = devices[0];
-                    document.getElementById('status').innerText = `發現已配對裝置: ${rememberedDevice.name}`;
-                    document.getElementById('actionBtn').innerText = "快速重連";
+                    statusEl.innerText = `發現已配對裝置: ${rememberedDevice.name}`;
+                    actionBtn.innerText = "快速重連";
+                    document.getElementById('resetBtn').classList.remove('hidden');
+                } else {
+                    statusEl.innerText = "未發現已配對裝置";
+                    actionBtn.innerText = "搜尋新裝置";
                 }
+            } else {
+                actionBtn.innerText = "搜尋裝置";
             }
-        };
+        }
 
         async function handleButtonClick() {
             if (rememberedDevice) {
-                // 如果有記住的裝置，直接連線，不跳掃描視窗
                 await connectToDevice(rememberedDevice);
             } else {
-                // 否則開啟全新掃描
                 await requestNewDevice();
             }
         }
 
         async function requestNewDevice() {
+            const statusEl = document.getElementById('status');
             try {
+                // 強制斷開舊連線
+                if (rememberedDevice && rememberedDevice.gatt.connected) {
+                    await rememberedDevice.gatt.disconnect();
+                }
+                
+                statusEl.innerText = "請選擇您的 PiLEDControl...";
                 const device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [SERVICE_UUID]
                 });
                 await connectToDevice(device);
             } catch (e) {
-                console.log(e);
+                statusEl.innerText = "取消掃描";
             }
         }
 
         async function connectToDevice(device) {
             const statusEl = document.getElementById('status');
+            const actionBtn = document.getElementById('actionBtn');
+            
             try {
-                statusEl.innerText = "正在檢查裝置狀態...";
-
-                // 1. 如果裝置其實已經連上了，直接抓取服務
-                let server;
-                if (device.gatt.connected) {
-                    server = device.gatt;
-                } else {
-                    // 2. 否則才執行連線動作
-                    statusEl.innerText = "正在恢復硬體連線...";
-                    server = await device.gatt.connect();
-                }
-
-                statusEl.innerText = "正在綁定通道...";
+                statusEl.innerText = "正在連線伺服器...";
+                
+                // 增加超時保護與強制連接
+                const server = await device.gatt.connect();
+                
+                statusEl.innerText = "正在取得服務通道...";
                 const service = await server.getPrimaryService(SERVICE_UUID);
+                
+                statusEl.innerText = "正在綁定特徵值...";
                 ledCharacteristic = await service.getCharacteristic(CHAR_UUID);
 
-                statusEl.innerText = "✅ 已恢復連線";
+                statusEl.innerText = "✅ 連線成功！";
                 document.getElementById('controlPanel').classList.remove('hidden');
-                document.getElementById('actionBtn').classList.add('hidden');
+                actionBtn.classList.add('hidden');
+                document.getElementById('resetBtn').classList.remove('hidden');
+                document.getElementById('resetBtn').innerText = "斷開並重置";
             } catch (error) {
-                statusEl.innerText = "❌ 重連失敗: " + error.message;
-                console.error("錯誤詳情:", error);
-                // 如果失敗，建議使用者手動關開藍牙
-                alert("請嘗試關閉並重新開啟 iPhone 藍牙，再點擊連線。");
+                console.error(error);
+                statusEl.innerText = "❌ 重連失敗，正在自動重置...";
+                // 失敗時，顯示重置按鈕並引導手動掃描
+                document.getElementById('resetBtn').classList.remove('hidden');
+                actionBtn.innerText = "手動掃描";
+                rememberedDevice = null; 
             }
         }
 
@@ -166,11 +130,10 @@
                 await ledCharacteristic.writeValue(encoder.encode(val));
                 document.getElementById('status').innerText = `指令 [${val}] 已送出`;
             } catch (error) {
-                alert("連線已中斷，請重整網頁");
+                alert("連線失效，請點擊重置按鈕");
                 location.reload();
             }
         }
     </script>
 </body>
-
 </html>
