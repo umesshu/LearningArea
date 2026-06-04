@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>機器人控制</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #111;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      height: 100dvh;
+      touch-action: none;
+      user-select: none;
+    }
+    .joystick-zone {
+      position: relative;
+      width: 140px;
+      height: 140px;
+    }
+    .base {
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.08);
+      border: 2px solid rgba(255,255,255,0.2);
+      position: absolute;
+    }
+    .stick {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.5);
+      position: absolute;
+      top: 42px;
+      left: 42px;
+      transition: background 0.1s;
+    }
+    .stick.active { background: rgba(80,200,120,0.8); }
+    .label {
+      color: rgba(255,255,255,0.4);
+      font-size: 12px;
+      text-align: center;
+      margin-top: 10px;
+      font-family: sans-serif;
+    }
+    #status {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255,255,255,0.3);
+      font-size: 11px;
+      font-family: sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">連線中...</div>
+
+  <div>
+    <div class="joystick-zone" id="zone-L">
+      <div class="base"></div>
+      <div class="stick" id="stick-L"></div>
+    </div>
+    <div class="label">左輪</div>
+  </div>
+
+  <div>
+    <div class="joystick-zone" id="zone-R">
+      <div class="base"></div>
+      <div class="stick" id="stick-R"></div>
+    </div>
+    <div class="label">右輪</div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/socket.io/client-dist/socket.io.min.js"></script>
+  <script>
+    const socket = io();
+    const RADIUS = 42;       // 搖桿最大偏移半徑 px
+    const SEND_HZ = 20;      // 每秒傳送次數
+    const DEADZONE = 5;      // 死區 px，小於此值視為 0
+
+    let state = { L: 0, R: 0 };
+    let touches = {};        // touchId → { side, startY, stickEl }
+
+    socket.on("connect",    () => setStatus("已連線", "#4ade80"));
+    socket.on("disconnect", () => setStatus("已斷線", "#f87171"));
+
+    function setStatus(msg, color) {
+      const el = document.getElementById("status");
+      el.textContent = msg;
+      el.style.color = color;
+    }
+
+    function getSpeed(dy) {
+      // dy 向上為負 → 正速；向下為正 → 負速
+      const clamped = Math.max(-RADIUS, Math.min(RADIUS, -dy));
+      if (Math.abs(clamped) < DEADZONE) return 0;
+      return Math.round(clamped / RADIUS * 100);
+    }
+
+    function updateStick(side, dy) {
+      const stickEl = document.getElementById("stick-" + side);
+      const offsetY = Math.max(-RADIUS, Math.min(RADIUS, dy));
+      stickEl.style.transform = `translateY(${offsetY}px)`;
+      stickEl.classList.toggle("active", Math.abs(dy) > DEADZONE);
+    }
+
+    // ── Touch 事件 ──
+    ["zone-L", "zone-R"].forEach(id => {
+      const zone = document.getElementById(id);
+      const side = id.split("-")[1];
+
+      zone.addEventListener("touchstart", e => {
+        e.preventDefault();
+        const t = e.changedTouches[0];
+        touches[t.identifier] = { side, startY: t.clientY };
+      }, { passive: false });
+    });
+
+    document.addEventListener("touchmove", e => {
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        const info = touches[t.identifier];
+        if (!info) continue;
+        const dy = t.clientY - info.startY;
+        state[info.side] = getSpeed(dy);
+        updateStick(info.side, Math.max(-RADIUS, Math.min(RADIUS, dy)));
+      }
+    }, { passive: false });
+
+    document.addEventListener("touchend", e => {
+      for (const t of e.changedTouches) {
+        const info = touches[t.identifier];
+        if (!info) continue;
+        state[info.side] = 0;
+        updateStick(info.side, 0);
+        delete touches[t.identifier];
+      }
+    });
+
+    // ── 定速傳送（20Hz）──
+    setInterval(() => {
+      socket.emit("move", state);
+    }, 1000 / SEND_HZ);
+  </script>
+</body>
+</html>
