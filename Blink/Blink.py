@@ -9,8 +9,8 @@ print("LED 開始閃爍... 按下 Ctrl+C 可停止")
 try:
     while True:
         led.on()       # 點亮 LED
-        sleep(1)       # 持續 1 秒
+        sleep(0.5)     # 持續 0.5 秒
         led.off()      # 關閉 LED
-        sleep(1)       # 持續 1 秒
+        sleep(0.5)     # 持續 0.5 秒
 except KeyboardInterrupt:
     print("\n程式已停止")
