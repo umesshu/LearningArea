@@ -1,0 +1,33 @@
+# mediamtx.yml
+# FPV 機器人攝影機串流設定（v1.9.1 相容版本）
+
+logLevel: info
+logDestinations: [stdout]
+
+rtsp: yes
+rtspAddress: :8554
+
+webrtc: yes
+webrtcAddress: :8889
+
+hls: no
+srt: no
+rtmp: no
+
+paths:
+  cam:
+    source: rpiCamera
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFps: 30
+
+    # v1.9.x 已移除 rpiCameraRotation
+    # 改用 VFlip / HFlip 組合來達到旋轉效果：
+    #   正常方向         → 兩個都 false（預設）
+    #   上下顛倒（180°） → VFlip: true, HFlip: true
+    #   左右鏡像         → HFlip: true, VFlip: false
+    rpiCameraVFlip: false
+    rpiCameraHFlip: false
+
+    rpiCameraBitrate: 1000000
+    rpiCameraIDRPeriod: 1

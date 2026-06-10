@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <!--
+    viewport: width=device-width  讓寬度等於裝置實際像素寬度
+    initial-scale=1               不自動縮放
+    user-scalable=no              停用雙指縮放，避免誤觸
+    viewport-fit=cover            iPhone 安全區（瀏海/底部 Home Bar）延伸到邊緣
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>FPV Robot</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #000;
+      width: 100dvw;
+      height: 100dvh;
+      overflow: hidden;
+      /* touch-action: none 防止系統捕獲觸控事件（如滾動、縮放），讓搖桿操作更精準 */
+      touch-action: none;
+      user-select: none;
+      font-family: -apple-system, sans-serif;
+    }
+
+    /* ── 攝影機畫面（全螢幕背景）── */
+    #camera {
+      position: absolute;
+      inset: 0;                    /* top/right/bottom/left 全部 0 */
+      width: 100%;
+      height: 100%;
+      object-fit: contain;         /* 保持比例完整顯示，不裁切 */
+      background: #111;
+    }
+
+    /* ── 連線狀態指示燈（左上角）── */
+    #status {
+      position: absolute;
+      top: max(16px, env(safe-area-inset-top));    /* 安全區域內移 */
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(8px);
+      border-radius: 20px;
+      padding: 5px 12px;
+      font-size: 12px;
+      color: #fff;
+      pointer-events: none;        /* 不攔截觸控事件 */
+    }
+
+    #dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #888;
+      transition: background 0.3s;
+    }
+    #dot.connected    { background: #22c55e; }   /* 綠：已連線 */
+    #dot.disconnected { background: #ef4444; }   /* 紅：斷線 */
+
+    /* ── 搖桿外層容器（貼底部安全區）── */
+    #controls {
+      position: absolute;
+      bottom: max(24px, env(safe-area-inset-bottom));
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: space-between;
+      padding: 0 32px;
+      pointer-events: none;        /* 容器本身不攔截，讓搖桿各自處理 */
+    }
+
+    /* ── 單個搖桿外圈 ── */
+    .joystick-zone {
+      position: relative;
+      width: 130px;
+      height: 130px;
+      pointer-events: auto;        /* 恢復觸控接收 */
+    }
+
+    .base {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1.5px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* ── 搖桿內圈（可移動的拇指區）── */
+    .stick {
+      position: absolute;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.85);
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      transition: transform 0.08s ease-out;   /* 放開時回彈動畫 */
+      /* 放開手指後的回中過渡；拖動中會被 JS 暫時設為 none */
+    }
+
+    /* ── 搖桿速度數值顯示（除錯用）── */
+    .speed-label {
+      position: absolute;
+      bottom: -24px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.6);
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+
+  <!--
+    攝影機串流畫面
+    src 留空，JS 會在頁面載入後動態填入 mediamtx WebRTC 網址
+    autoplay muted playsinline：iOS Safari 的無聲自動播放三件套
+    muted 是 iOS 允許 autoplay 的必要條件（開聲音要 HTTPS + 使用者互動）
+  -->
+  <video id="camera" autoplay muted playsinline></video>
+
+  <!-- 連線狀態 -->
+  <div id="status">
+    <div id="dot"></div>
+    <span id="status-text">連接中…</span>
+  </div>
+
+  <!-- 雙搖桿 -->
+  <div id="controls">
+    <div class="joystick-zone" id="left-zone">
+      <div class="base"></div>
+      <div class="stick" id="left-stick"></div>
+      <div class="speed-label" id="left-label">L: 0</div>
+    </div>
+    <div class="joystick-zone" id="right-zone">
+      <div class="base"></div>
+      <div class="stick" id="right-stick"></div>
+      <div class="speed-label" id="right-label">R: 0</div>
+    </div>
+  </div>
+
+  <!-- Socket.IO 客戶端（Flask-SocketIO v5+ 不再自動提供，改用 CDN） -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+  <script>
+    // ══════════════════════════════════════════════════════
+    //  1. 攝影機串流（mediamtx WebRTC）
+    // ══════════════════════════════════════════════════════
+
+    /*
+      mediamtx 預設 WebRTC API 端點格式：
+        http://<Pi IP>:8889/<stream name>/whep
+
+      WHEP = WebRTC-HTTP Egress Protocol，用來從伺服器拉影像
+      這裡用 window.location.hostname 自動取得當前連線的 IP，
+      避免硬寫死 IP 造成每次換環境都要改程式碼
+    */
+    const MEDIAMTX_PORT = 8889;
+    const STREAM_NAME   = "cam";   // 對應 mediamtx.yml 裡的 path 名稱
+    const whepUrl = `http://${window.location.hostname}:${MEDIAMTX_PORT}/${STREAM_NAME}/whep`;
+
+    async function startCamera() {
+      /*
+        WHEPClient 是 mediamtx 靜態頁面內建的 JS class（port 8889 根路徑可取得）
+        這裡改用原生 RTCPeerConnection 手動實作 WHEP 協議：
+          1. 建立 PeerConnection，加入 recvonly transceiver
+          2. 建立 SDP offer
+          3. POST 到 WHEP 端點，取得 SDP answer
+          4. 設定 answer，開始接收影像
+      */
+      const pc = new RTCPeerConnection({
+        iceServers: []   // 同一 WiFi 區域網路，不需要 STUN/TURN 伺服器
+      });
+
+      // 建立只接收（recvonly）的 video transceiver
+      pc.addTransceiver("video", { direction: "recvonly" });
+
+      // 當遠端串流進來時，把它設為 <video> 的來源
+      pc.ontrack = (e) => {
+        const video = document.getElementById("camera");
+        if (e.streams && e.streams[0]) {
+          video.srcObject = e.streams[0];
+          video.play().catch(err => console.warn("video play error:", err));
+        }
+      };
+
+      // 建立 SDP offer（描述「我想接收視訊」的協商文件）
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      try {
+        // 把 offer 送到 mediamtx，取得 answer
+        const resp = await fetch(whepUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/sdp" },
+          body: offer.sdp
+        });
+
+        if (!resp.ok) throw new Error(`WHEP 回應 ${resp.status}`);
+
+        const answerSdp = await resp.text();
+        await pc.setRemoteDescription({
+          type: "answer",
+          sdp: answerSdp
+        });
+
+        console.log("攝影機串流連線成功");
+      } catch (err) {
+        console.warn("攝影機串流失敗（mediamtx 可能尚未啟動）:", err);
+        // 串流失敗時只顯示黑色背景，不影響搖桿控制功能
+      }
+    }
+
+    startCamera();
+
+
+    // ══════════════════════════════════════════════════════
+    //  2. WebSocket（Flask-SocketIO）馬達控制
+    // ══════════════════════════════════════════════════════
+
+    /*
+      Socket.IO 連線：自動連回提供這個網頁的同一伺服器
+      不需要指定 IP，因為網頁本身就是 Flask 提供的
+    */
+    const socket = io();
+
+    const dot        = document.getElementById("dot");
+    const statusText = document.getElementById("status-text");
+
+    socket.on("connect", () => {
+      dot.className        = "connected";
+      statusText.textContent = "已連線";
+    });
+
+    socket.on("disconnect", () => {
+      dot.className        = "disconnected";
+      statusText.textContent = "已斷線";
+      // 斷線時把本機速度值歸零（伺服器端 disconnect 事件也會停車）
+      leftSpeed  = 0;
+      rightSpeed = 0;
+    });
+
+
+    // ══════════════════════════════════════════════════════
+    //  3. 搖桿邏輯
+    // ══════════════════════════════════════════════════════
+
+    let leftSpeed  = 0;   // -100 ~ 100
+    let rightSpeed = 0;
+
+    /*
+      DEADZONE：5px 以內的偏移視為零
+      避免手指輕放搖桿時因為接觸偏差造成微小速度輸出
+    */
+    const DEADZONE   = 5;
+    const SEND_RATE  = 50;   // 每 50ms 送一次指令（20Hz）
+
+    /*
+      createJoystick(zoneId, stickId, labelId, onValue)
+      ─────────────────────────────────────────────────
+      zoneId  : 外圈 div 的 id
+      stickId : 內圈（可移動圓圈）的 id
+      labelId : 速度顯示文字的 id
+      onValue : 速度值改變時的 callback，參數為 -100~100 的整數
+    */
+    function createJoystick(zoneId, stickId, labelId, onValue) {
+      const zone  = document.getElementById(zoneId);
+      const stick = document.getElementById(stickId);
+      const label = document.getElementById(labelId);
+
+      const RADIUS = 65;   // 搖桿外圈半徑（px），限制內圈移動範圍
+
+      let active     = false;
+      let touchId    = null;   // 追蹤觸控點的 identifier，支援多指操作
+      let centerX    = 0;
+      let centerY    = 0;
+
+      function getCenter() {
+        // getBoundingClientRect 取得外圈在螢幕上的實際位置
+        const r = zone.getBoundingClientRect();
+        return {
+          x: r.left + r.width  / 2,
+          y: r.top  + r.height / 2
+        };
+      }
+
+      function onStart(e) {
+        e.preventDefault();
+        if (active) return;   // 同一個搖桿只處理第一個觸控點
+
+        const touch = e.changedTouches[0];
+        touchId = touch.identifier;
+        active  = true;
+
+        const c = getCenter();
+        centerX = c.x;
+        centerY = c.y;
+
+        // 拖動中關閉回彈動畫，讓搖桿跟手指走
+        stick.style.transition = "none";
+        onMove(e);
+      }
+
+      function onMove(e) {
+        if (!active) return;
+        e.preventDefault();
+
+        // 找到對應的觸控點
+        let touch = null;
+        for (const t of e.changedTouches) {
+          if (t.identifier === touchId) { touch = t; break; }
+        }
+        if (!touch) return;
+
+        // 計算手指相對搖桿中心的偏移
+        const dx = touch.clientX - centerX;
+        const dy = touch.clientY - centerY;
+
+        // 限制內圈不超出外圈範圍
+        const dist   = Math.sqrt(dx * dx + dy * dy);
+        const clamped = Math.min(dist, RADIUS);
+        const angle   = Math.atan2(dy, dx);
+
+        const clampedX = Math.cos(angle) * clamped;
+        const clampedY = Math.sin(angle) * clamped;
+
+        // 移動內圈視覺位置
+        stick.style.transform =
+          `translate(calc(-50% + ${clampedX}px), calc(-50% + ${clampedY}px))`;
+
+        /*
+          只取垂直軸（Y 軸）作為速度
+            dy 為負 = 往上推 = 前進 → speed 為正
+            dy 為正 = 往下推 = 後退 → speed 為負
+          DEADZONE 5px 以內歸零
+        */
+        const rawY = -clampedY;   // 反轉使上推為正
+        const speed = Math.abs(rawY) < DEADZONE
+          ? 0
+          : Math.round((rawY / RADIUS) * 100);
+
+        label.textContent = (zoneId === "left-zone" ? "L: " : "R: ") + speed;
+        onValue(speed);
+      }
+
+      function onEnd(e) {
+        let isThisTouch = false;
+        for (const t of e.changedTouches) {
+          if (t.identifier === touchId) { isThisTouch = true; break; }
+        }
+        if (!isThisTouch) return;
+
+        active  = false;
+        touchId = null;
+
+        // 放開手指：恢復回彈動畫，內圈回中央
+        stick.style.transition = "transform 0.08s ease-out";
+        stick.style.transform  = "translate(-50%, -50%)";
+
+        label.textContent = (zoneId === "left-zone" ? "L: " : "R: ") + "0";
+        onValue(0);
+      }
+
+      // 觸控事件綁定在外圈，這樣手指滑出內圈也能繼續追蹤
+      zone.addEventListener("touchstart",  onStart, { passive: false });
+      zone.addEventListener("touchmove",   onMove,  { passive: false });
+      zone.addEventListener("touchend",    onEnd,   { passive: false });
+      zone.addEventListener("touchcancel", onEnd,   { passive: false });
+    }
+
+    // 建立左右搖桿，分別更新 leftSpeed / rightSpeed
+    createJoystick("left-zone",  "left-stick",  "left-label",  v => { leftSpeed  = v; });
+    createJoystick("right-zone", "right-stick", "right-label", v => { rightSpeed = v; });
+
+
+    // ══════════════════════════════════════════════════════
+    //  4. 定時發送指令（20Hz）
+    // ══════════════════════════════════════════════════════
+
+    /*
+      setInterval 每 50ms 發一次 move 事件
+      不在 touchmove 裡直接 emit 的原因：
+        touchmove 觸發頻率由瀏覽器決定，在 60fps 螢幕上可達 60Hz，
+        過高的頻率會讓樹莓派的 Socket.IO 處理佇列累積，造成延遲。
+      固定 20Hz 是控制系統的常見頻率，兼顧反應速度與網路流量。
+    */
+    setInterval(() => {
+      if (socket.connected) {
+        socket.emit("move", { L: leftSpeed, R: rightSpeed });
+      }
+    }, SEND_RATE);
+
+  </script>
+</body>
+</html>
