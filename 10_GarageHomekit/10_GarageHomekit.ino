@@ -3,8 +3,8 @@
 #include <arduino_homekit_server.h>
 
 // ==================== 使用者設定 ====================
-const char *ssid     = "你的WiFi名稱";      // ← 改成你家 2.4GHz Wi-Fi
-const char *password = "你的WiFi密碼";      // ← 改成你的密碼
+const char *ssid     = "Jimmy-Wifi6-2-4G";      // ← 改成你家 2.4GHz Wi-Fi
+const char *password = "0988178308";      // ← 改成你的密碼
 
 // ---- 腳位(用絲印符號,核心自動對應正確 GPIO)----
 #define PIN_OPEN    D5   // 開門(上)  → GPIO14
