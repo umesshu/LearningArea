@@ -3,7 +3,7 @@
 #include <arduino_homekit_server.h>
 
 // ==================== 使用者設定 ====================
-const char *ssid     = "Jimmy-Wifi6-2-4G";      // ← 改成你家 2.4GHz Wi-Fi
+const char *ssid     = "Jimmy-Wifi6";      // ← 改成你家 2.4GHz Wi-Fi
 const char *password = "0988178308";      // ← 改成你的密碼
 
 // ---- 腳位(用絲印符號,核心自動對應正確 GPIO)----
@@ -12,80 +12,116 @@ const char *password = "0988178308";      // ← 改成你的密碼
 #define PIN_PAUSE   D7   // 暫停(停/開) → GPIO13
 
 #define PULSE_MS      400        // 模擬按一下的脈衝長度
-#define TRAVEL_MS     20000UL    // 假設門開/關全程約 20 秒(依實測調整)
 
 // ==================== HomeKit 特性 ====================
 extern "C" homekit_server_config_t config;
-extern "C" homekit_characteristic_t cha_current_door_state;
-extern "C" homekit_characteristic_t cha_target_door_state;
-extern "C" homekit_characteristic_t cha_obstruction;
+extern "C" homekit_characteristic_t cha_open_on;
+extern "C" homekit_characteristic_t cha_close_on;
 extern "C" homekit_characteristic_t cha_pause_on;
 
-unsigned long moveStart = 0;   // 動作起點(0=靜止)
-uint8_t movingTo = 1;          // 這次動作的目標:0=開 1=關
+#define WIFI_RSSI_INTERVAL_MS  5000UL   // WiFi訊號強度顯示間隔
+unsigned long lastRssiPrint = 0;
+
+// 顯示WiFi訊號強度(連線中/已連線皆可呼叫)
+void printWifiRssi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("[WiFi] 已連線,訊號強度 RSSI=%d dBm\n", WiFi.RSSI());
+  } else {
+    Serial.println("[WiFi] 連線中,尚無訊號強度資料...");
+  }
+}
 
 // ==================== 工具 ====================
-void pulse(uint8_t pin) {
-  digitalWrite(pin, HIGH);
-  delay(PULSE_MS);
-  digitalWrite(pin, LOW);
+// 三個開關共用:按下(On)就啟動脈衝,由 loop() 非阻塞地在 PULSE_MS 後收尾,
+// 避免 delay() 卡住 HomeKit 處理迴圈導致其他請求逾時。
+struct PulseSwitch {
+  homekit_characteristic_t *cha;
+  uint8_t pin;
+  const char *label;
+  bool active;
+  unsigned long start;
+};
+
+PulseSwitch pulseSwitches[3] = {
+  { &cha_open_on,  PIN_OPEN,  "開門", false, 0 },
+  { &cha_close_on, PIN_CLOSE, "關門", false, 0 },
+  { &cha_pause_on, PIN_PAUSE, "暫停", false, 0 },
+};
+
+void trigger_switch(uint8_t idx, const homekit_value_t value) {
+  PulseSwitch &sw = pulseSwitches[idx];
+  if (value.bool_value && !sw.active) {
+    digitalWrite(sw.pin, HIGH);
+    sw.active = true;
+    sw.start = millis();
+    Serial.printf("[指令] %s\n", sw.label);
+  }
+}
+
+void update_pulse_switches() {
+  for (uint8_t i = 0; i < 3; i++) {
+    PulseSwitch &sw = pulseSwitches[i];
+    if (sw.active && millis() - sw.start >= PULSE_MS) {
+      digitalWrite(sw.pin, LOW);
+      sw.active = false;
+      sw.cha->value = HOMEKIT_BOOL_CPP(false);
+      homekit_characteristic_notify(sw.cha, sw.cha->value);
+    }
+  }
 }
 
 // ==================== HomeKit 回呼 ====================
-// 家庭 App 按開 / 關
-void target_door_setter(const homekit_value_t value) {
-  cha_target_door_state.value = value;
-  uint8_t t = value.uint8_value;   // 0=開 1=關
-
-  if (t == 0) {                    // 要開
-    pulse(PIN_OPEN);
-    cha_current_door_state.value = HOMEKIT_UINT8_CPP(2);   // 開啟中
-  } else {                         // 要關
-    pulse(PIN_CLOSE);
-    cha_current_door_state.value = HOMEKIT_UINT8_CPP(3);   // 關閉中
-  }
-  cha_obstruction.value = HOMEKIT_BOOL_CPP(false);
-  homekit_characteristic_notify(&cha_current_door_state, cha_current_door_state.value);
-  homekit_characteristic_notify(&cha_obstruction, cha_obstruction.value);
-
-  movingTo = t;
-  moveStart = millis();
-  Serial.printf("[指令] 目標=%s\n", t == 0 ? "開" : "關");
-}
-
-// 暫停開關:觸發後自動彈回,並把門標成 STOPPED
-void pause_setter(const homekit_value_t value) {
-  if (value.bool_value) {
-    pulse(PIN_PAUSE);
-    cha_pause_on.value = HOMEKIT_BOOL_CPP(false);
-    homekit_characteristic_notify(&cha_pause_on, cha_pause_on.value);
-
-    moveStart = 0;   // 停止計時
-    cha_current_door_state.value = HOMEKIT_UINT8_CPP(4);   // STOPPED
-    homekit_characteristic_notify(&cha_current_door_state, cha_current_door_state.value);
-    Serial.println("[指令] 暫停 → STOPPED");
-  }
-}
+void open_setter(const homekit_value_t value)  { trigger_switch(0, value); }
+void close_setter(const homekit_value_t value) { trigger_switch(1, value); }
+void pause_setter(const homekit_value_t value) { trigger_switch(2, value); }
 
 // ==================== setup ====================
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("\n[車庫門控制器 · 無感測三鍵版]");
+  Serial.println("\n[車庫門控制器 · 三開關版]");
 
   pinMode(PIN_OPEN, OUTPUT);   digitalWrite(PIN_OPEN, LOW);
   pinMode(PIN_CLOSE, OUTPUT);  digitalWrite(PIN_CLOSE, LOW);
   pinMode(PIN_PAUSE, OUTPUT);  digitalWrite(PIN_PAUSE, LOW);
 
-  cha_target_door_state.setter = target_door_setter;
+  cha_open_on.setter = open_setter;
+  cha_close_on.setter = close_setter;
   cha_pause_on.setter = pause_setter;
 
   WiFi.mode(WIFI_STA);
+
+  // ---- 暫時診斷:掃描附近WiFi,確認SSID是否存在 ----
+  Serial.println("[WiFi] 掃描附近網路...");
+  int n = WiFi.scanNetworks();
+  for (int i = 0; i < n; i++) {
+    Serial.printf("  %2d: %-32s  RSSI=%d  %s\n",
+                  i + 1, WiFi.SSID(i).c_str(), WiFi.RSSI(i),
+                  WiFi.encryptionType(i) == ENC_TYPE_NONE ? "開放" : "加密");
+  }
+  Serial.println("[WiFi] 掃描結束");
+
   WiFi.begin(ssid, password);
   Serial.print("[WiFi] 連線中");
-  while (WiFi.status() != WL_CONNECTED) { delay(300); Serial.print("."); }
+  int retry = 0;
+  lastRssiPrint = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+    Serial.print(".");
+    if (++retry > 40) {   // 12秒還沒連上就印出狀態碼並重試,避免看不出卡在哪
+      Serial.printf("\n[WiFi] 逾時,status=%d,重新嘗試...\n", WiFi.status());
+      WiFi.begin(ssid, password);
+      retry = 0;
+    }
+    if (millis() - lastRssiPrint >= WIFI_RSSI_INTERVAL_MS) {
+      Serial.println();
+      printWifiRssi();
+      lastRssiPrint = millis();
+    }
+  }
   Serial.print("\n[WiFi] 已連線 IP=");
   Serial.println(WiFi.localIP());
+  lastRssiPrint = millis();
 
   arduino_homekit_setup(&config);
   Serial.println("[HomeKit] 就緒,配對碼 111-11-111");
@@ -94,17 +130,11 @@ void setup() {
 // ==================== loop ====================
 void loop() {
   arduino_homekit_loop();
+  update_pulse_switches();
 
-  // 無感測:用計時器模擬「門走完全程」,時間到就把狀態設為已開/已關
-  if (moveStart != 0 && (millis() - moveStart >= TRAVEL_MS)) {
-    if (movingTo == 0) {
-      cha_current_door_state.value = HOMEKIT_UINT8_CPP(0);   // OPEN
-    } else {
-      cha_current_door_state.value = HOMEKIT_UINT8_CPP(1);   // CLOSED
-    }
-    homekit_characteristic_notify(&cha_current_door_state, cha_current_door_state.value);
-    Serial.printf("[狀態] 假定已%s(計時 %lu 秒到)\n",
-                  movingTo == 0 ? "開" : "關", TRAVEL_MS / 1000);
-    moveStart = 0;
+  // 每隔約5秒顯示一次WiFi訊號強度
+  if (millis() - lastRssiPrint >= WIFI_RSSI_INTERVAL_MS) {
+    printWifiRssi();
+    lastRssiPrint = millis();
   }
 }
