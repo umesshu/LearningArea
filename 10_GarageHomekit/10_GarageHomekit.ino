@@ -11,7 +11,8 @@ const char *password = "0988178308";      // ← 改成你的密碼
 #define PIN_CLOSE   D6   // 關門(下)  → GPIO12
 #define PIN_PAUSE   D7   // 暫停(停/開) → GPIO13
 
-#define PULSE_MS      400        // 模擬按一下的脈衝長度
+#define PULSE_MS        400      // 「上」「下」模擬按一下的脈衝長度
+#define PULSE_MS_PAUSE  1200     // 「暫停」模擬按一下的脈衝長度
 
 // ==================== HomeKit 特性 ====================
 extern "C" homekit_server_config_t config;
@@ -38,14 +39,15 @@ struct PulseSwitch {
   homekit_characteristic_t *cha;
   uint8_t pin;
   const char *label;
+  unsigned long pulse_ms;
   bool active;
   unsigned long start;
 };
 
 PulseSwitch pulseSwitches[3] = {
-  { &cha_open_on,  PIN_OPEN,  "開門", false, 0 },
-  { &cha_close_on, PIN_CLOSE, "關門", false, 0 },
-  { &cha_pause_on, PIN_PAUSE, "暫停", false, 0 },
+  { &cha_open_on,  PIN_OPEN,  "開門", PULSE_MS,       false, 0 },
+  { &cha_close_on, PIN_CLOSE, "關門", PULSE_MS,       false, 0 },
+  { &cha_pause_on, PIN_PAUSE, "暫停", PULSE_MS_PAUSE, false, 0 },
 };
 
 void trigger_switch(uint8_t idx, const homekit_value_t value) {
@@ -61,7 +63,7 @@ void trigger_switch(uint8_t idx, const homekit_value_t value) {
 void update_pulse_switches() {
   for (uint8_t i = 0; i < 3; i++) {
     PulseSwitch &sw = pulseSwitches[i];
-    if (sw.active && millis() - sw.start >= PULSE_MS) {
+    if (sw.active && millis() - sw.start >= sw.pulse_ms) {
       digitalWrite(sw.pin, LOW);
       sw.active = false;
       sw.cha->value = HOMEKIT_BOOL_CPP(false);
