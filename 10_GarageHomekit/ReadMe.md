@@ -37,6 +37,43 @@ arduino-cli compile --fqbn esp8266:esp8266:d1 . \
 arduino-cli monitor -p /dev/ttyUSB0 -c baudrate=115200
 ```
 
+## 序列埠記錄工具(log_serial.py)
+把 D1 mini 的 Serial 輸出**加上時間戳**存進 `logs/` 資料夾,方便事後排查(WiFi 連線、HomeKit 配對過程、重置原因都會記下來)。只用 Python 標準函式庫,不需安裝 pyserial。
+
+```bash
+./log_serial.py                  # 開始記錄(Ctrl+C 停止),同時顯示在畫面上
+./log_serial.py --quiet          # 只寫檔案,不在畫面上顯示
+./log_serial.py --port /dev/ttyUSB1
+./log_serial.py --stats          # 不記錄,改為分析既有 log 檔
+```
+
+- 記錄檔存於 `logs/serial_YYYYMMDD_HHMMSS.log`,每行即時寫入。
+- 啟動時會透過 DTR/RTS 觸發板子重置一次,剛好能從頭記錄到開機訊息。
+- **執行中會佔用序列埠**,要重新上傳韌體前請先按 Ctrl+C 停止。
+
+## 清除舊配對(找不到裝置時)
+若在 iOS 家庭 App 找不到配件,通常是裝置快閃記憶體裡**殘留舊配對資料**——裝置以為自己已配對,不再廣播成可新增的配件(log 會出現 `Found admin pairing ... disabling pair setup`)。此時要清掉舊配對,讓它重新變回未配對狀態。
+
+主程式頂端有一個一次性開關:
+```cpp
+#define RESET_HOMEKIT_PAIRING  0   // 平時保持 0
+```
+
+步驟:
+1. 先在 iOS 家庭 App 移除舊配件(若還看得到)。
+2. 把 `RESET_HOMEKIT_PAIRING` 改為 `1` → 編譯燒錄 → 開機一次。
+   log 會顯示 `*** 清除舊配對資料 ***` 與 `HomeKit: Resetting HomeKit storage`,並產生全新 accessory ID。
+3. **把 `RESET_HOMEKIT_PAIRING` 改回 `0` → 再燒錄一次**(這步不可省;維持 1 的話每次開機都會清掉配對,將永遠無法配對成功)。
+4. 回家庭 App 重新加入,輸入配對碼 `111-11-111`。
+
+> 驗證是否清乾淨:重開機後 log 應顯示 `Using existing accessory ID`,而**不再**出現 `Resetting` 或 `Found admin pairing`。
+
+## 找不到裝置的排查順序
+1. **確認裝置有在廣播**:在同網段的電腦上查 mDNS —— 應看到 `_hap._tcp` 服務、TXT 內含 `sf=1`(未配對、可被發現)。
+2. **iPhone 必須和裝置在同一網段**:ESP8266 只支援 2.4GHz;iPhone 若連 5GHz 且路由器把兩頻段切成不同子網,就收不到 mDNS 廣播 → iPhone 改連與裝置同一個 2.4GHz SSID(可在 Wi-Fi (i) 裡確認 IP 是同一網段,例如都是 `192.168.0.x`)。
+3. 仍找不到:路由器可能開了 **AP 隔離 / 客戶端隔離** 或擋多播(IGMP snooping),進後台關掉。
+4. 訊號太弱(RSSI 低於約 -75 dBm)也會配對不穩,讓裝置靠近路由器再試。
+
 ## 燒錄前修改
 1. `ssid` / `password` → 你家 2.4GHz Wi-Fi
 

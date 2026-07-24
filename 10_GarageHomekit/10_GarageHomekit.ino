@@ -14,6 +14,12 @@ const char *password = "0988178308";      // ← 改成你的密碼
 #define PULSE_MS        400      // 「上」「下」模擬按一下的脈衝長度
 #define PULSE_MS_PAUSE  1200     // 「暫停」模擬按一下的脈衝長度
 
+// ==================== 一次性配對重置 ====================
+// 若在 iOS 家庭 App 找不到配件(裝置殘留舊配對),把下面設為 1 燒錄開機一次,
+// 待 log 顯示配對已清除後,再改回 0 重新燒錄,然後用配對碼重新加入。
+// 注意:維持 1 的話每次開機都會清掉配對,將永遠無法配對成功!
+#define RESET_HOMEKIT_PAIRING  0
+
 // ==================== HomeKit 特性 ====================
 extern "C" homekit_server_config_t config;
 extern "C" homekit_characteristic_t cha_open_on;
@@ -124,6 +130,12 @@ void setup() {
   Serial.print("\n[WiFi] 已連線 IP=");
   Serial.println(WiFi.localIP());
   lastRssiPrint = millis();
+
+#if RESET_HOMEKIT_PAIRING
+  Serial.println("[HomeKit] *** 清除舊配對資料(RESET_HOMEKIT_PAIRING=1)***");
+  Serial.println("[HomeKit] *** 完成後請把 RESET_HOMEKIT_PAIRING 改回 0 再燒一次!***");
+  homekit_storage_reset();
+#endif
 
   arduino_homekit_setup(&config);
   Serial.println("[HomeKit] 就緒,配對碼 111-11-111");
