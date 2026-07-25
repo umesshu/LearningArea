@@ -5,10 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# 依實際情況修改使用者與路徑
-User=pi
-WorkingDirectory=/home/pi/garage/pi_monitor
-ExecStart=/usr/bin/python3 /home/pi/garage/pi_monitor/server.py --port 8080 --udp-port 5514
+User=umesshu
+Group=umesshu
+WorkingDirectory=/home/umesshu/gemini_workspace/LearningArea/10_GarageHomekit/pi_monitor
+ExecStart=/usr/bin/python3 /home/umesshu/gemini_workspace/LearningArea/10_GarageHomekit/pi_monitor/server.py --port 8080 --udp-port 5514
+# 讓 print() 立刻進 journal,不要卡在緩衝區
+Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=5
 StandardOutput=journal

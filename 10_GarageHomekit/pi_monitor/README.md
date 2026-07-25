@@ -26,28 +26,39 @@ Wemos D1 R1 (192.168.0.222)
 
 需要 Python 3.7 以上，樹莓派系統內建即可。
 
+本專案的開發機**就是樹莓派本身**（Pi 5，192.168.0.113），所以不必 scp，直接跑：
+
 ```bash
-# 1. 把 pi_monitor 整個資料夾複製到樹莓派，例如 /home/pi/garage/pi_monitor
-scp -r pi_monitor pi@樹莓派IP:/home/pi/garage/
-
-# 2. 先手動跑一次確認正常
-cd /home/pi/garage/pi_monitor
+cd ~/gemini_workspace/LearningArea/10_GarageHomekit/pi_monitor
 python3 server.py
-
-# 3. 用瀏覽器打開 http://樹莓派IP:8080/
 ```
 
-看到 `[UDP] 監聽 0.0.0.0:5514` 和 `[HTTP] 儀表板 ...` 兩行就代表起來了。
+看到 `[UDP] 監聽 0.0.0.0:5514` 和 `[HTTP] 儀表板 ...` 兩行就代表起來了，
+然後用瀏覽器打開 <http://192.168.0.113:8080/>。
 
 ## 設成開機自動啟動
 
+`garage-monitor.service` 裡的路徑與 `User` 已經填好上面那台機器的實際值；
+換機器的話記得先改。
+
 ```bash
 sudo cp garage-monitor.service /etc/systemd/system/
-sudo nano /etc/systemd/system/garage-monitor.service   # 確認 User 與路徑正確
-sudo systemctl daemon-reload
+sudo systemctl daemon-reload            # 讓 systemd 重新掃描,不然它不知道多了新檔案
 sudo systemctl enable --now garage-monitor
-sudo systemctl status garage-monitor
-journalctl -u garage-monitor -f                        # 看即時輸出
+systemctl status garage-monitor
+journalctl -u garage-monitor -f         # 看即時輸出
+```
+
+日後修改設定：**改版控裡這一份**，再重新 `cp` 過去，然後
+`sudo systemctl daemon-reload && sudo systemctl restart garage-monitor`。
+不要直接編輯 `/etc/systemd/system/` 底下那份，否則兩邊會走鐘。
+
+完全移除（可逆，不留痕跡）：
+
+```bash
+sudo systemctl disable --now garage-monitor
+sudo rm /etc/systemd/system/garage-monitor.service
+sudo systemctl daemon-reload
 ```
 
 ## 參數
