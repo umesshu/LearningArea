@@ -5,8 +5,12 @@
 #include <VL53L1X.h>
 
 // ==================== 使用者設定 ====================
-const char *ssid     = "Jimmy-Wifi6";      // ← 與 iPhone/HomePod 同網段(192.168.0.x)
-const char *password = "0988178308";      // ← 改成你的密碼
+// WiFi 帳密放在同目錄的 secrets.h(已被 .gitignore 排除,不會進版控)。
+// 第一次使用:複製 secrets.h.example 成 secrets.h,填入自己的 SSID / 密碼。
+#include "secrets.h"
+
+const char *ssid     = WIFI_SSID;       // 與 iPhone/HomePod 同網段(192.168.0.x)
+const char *password = WIFI_PASSWORD;
 
 // ---- 靜態 IP(繞過不穩的 DHCP,避免拿到 169.254.x.x 孤立位址)----
 // 設 USE_STATIC_IP 為 1 啟用;IP 要在路由器同網段、且盡量避開 DHCP 配發範圍。

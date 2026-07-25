@@ -1,0 +1,2 @@
+# WiFi 帳密等機密設定,只留 secrets.h.example 範本在版控裡
+secrets.h
