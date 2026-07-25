@@ -1,10 +1,17 @@
-# 車庫門 HomeKit 控制器 · 三開關版(Wemos D1 R1)
+# 車庫門 HomeKit 控制器 · 測距版(Wemos D1 R1)
 
-Home App 裡是三個獨立的開關配件:「開門」「關門」「暫停」,各自按下(On)後觸發一次脈衝,再自動彈回 Off,不含任何門狀態顯示或位置感測。
+Home App 裡有四個配件:三個獨立開關「開門」「關門」「暫停」,按下(On)後觸發一次脈衝再自動彈回 Off;
+外加一個窗簾配件「車庫門」,用 VL53L1X 雷射測距回報門的開啟百分比,也可以拖滑桿下指令。
+
+另外所有除錯訊息會用 UDP 廣播送到樹莓派,可以用手機或電腦開網頁看即時狀態(見 `pi_monitor/`)。
 
 ## 檔案
 - `10_GarageHomekit.ino` — 主程式
-- `accessary.c` — HomeKit 配件(開門 / 關門 / 暫停,各為獨立 Switch 配件)
+- `accessary.c` — HomeKit 配件(開門 / 關門 / 暫停三個 Switch + 車庫門 Window Covering)
+- `secrets.h` — WiFi 帳密(**不進版控**,由 `.gitignore` 排除)
+- `secrets.h.example` — 上面那份的範本,第一次使用時複製改名
+- `log_serial.py` — 序列埠記錄工具
+- `pi_monitor/` — 樹莓派端的遙測收集器與網頁儀表板(見該資料夾的 README)
 
 ## 電路
 | 功能 | Wemos 腳 | GPIO | 接遙控器按鈕 |
@@ -18,12 +25,23 @@ Home App 裡是三個獨立的開關配件:「開門」「關門」「暫停」,
 - 光耦輸出並接遙控器按鈕兩焊點;接遙控器後兩側不共地
 - 「鎖」不接。電源用 USB 或 HLK-5M05
 
+### VL53L1X 測距感測器(I2C)
+| VL53L1X | Wemos |
+|---|---|
+| VIN | 3V3 |
+| GND | GND |
+| SDA | 板上標示 `SDA`(GPIO4) |
+| SCL | 板上標示 `SCL`(GPIO5) |
+
+⚠️ **不要用 D1 / D2 當 I2C**,本板 `D1`=GPIO1 是 UART TX,詳見下方 Lesson Learned。
+
 ## 安裝
 ```bash
 arduino-cli config add board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
 arduino-cli core update-index
 arduino-cli core install esp8266:esp8266
 arduino-cli lib install --git-url https://github.com/Mixiaoxiao/Arduino-HomeKit-ESP8266.git
+arduino-cli lib install VL53L1X
 ```
 
 ## 編譯燒錄(cd 進本資料夾)
@@ -36,6 +54,23 @@ arduino-cli compile --fqbn esp8266:esp8266:d1 . \
 ```bash
 arduino-cli monitor -p /dev/ttyUSB0 -c baudrate=115200
 ```
+
+## 網頁遠端監控(pi_monitor/)
+韌體裡所有 `netlogf()` 的訊息會**同時**進序列埠與 UDP 廣播,另外每 2 秒送一包 JSON 遙測
+(距離 / 位置 / 狀態 / RSSI / 可用記憶體 / 運行時間)。樹莓派收下來後提供一個網頁儀表板,
+手機或電腦連進去就能即時看門的狀態、趨勢圖與 log 串流。
+
+```cpp
+#define UDP_LOG_ENABLE       1       // 關成 0 就完全不送 UDP
+#define UDP_LOG_PORT         5514    // 要與 server.py 的 --udp-port 一致
+#define UDP_TELEMETRY_MS     2000UL  // 每隔多久送一包 JSON 遙測
+```
+
+用 UDP 而不是 MQTT / HTTP,是因為 `arduino_homekit_loop()` 不能被阻塞 ——
+UDP 送出即忘,樹莓派關機也不會拖慢韌體;TCP 在對方無回應時可能卡住數百毫秒導致 HomeKit 逾時。
+廣播位址由 IP 與遮罩自動算出,樹莓派換 IP 不必重燒韌體。
+
+安裝與疑難排解見 [`pi_monitor/README.md`](pi_monitor/README.md)。
 
 ## 序列埠記錄工具(log_serial.py)
 把 D1 mini 的 Serial 輸出**加上時間戳**存進 `logs/` 資料夾,方便事後排查(WiFi 連線、HomeKit 配對過程、重置原因都會記下來)。只用 Python 標準函式庫,不需安裝 pyserial。
@@ -101,12 +136,33 @@ IPAddress dns1     (192, 168, 0, 1);
 FQBN 用 `esp8266:esp8266:d1`(WeMos D1 R1)時,`D1`=GPIO1(**UART TX!**)、`D2`=GPIO16,**不能拿來當 I2C**——否則 `Wire.begin()` 會把 TX 腳搶走,序列埠整個沒輸出、開機像當機。I2C 要用板子內建 `SDA`(GPIO4)/ `SCL`(GPIO5) 常數,接到板上標示 SDA/SCL 的腳。
 
 ## 燒錄前修改
-1. `ssid` / `password` → 你家 2.4GHz Wi-Fi
+1. **WiFi 帳密** → 複製 `secrets.h.example` 成 `secrets.h`,填入你家 2.4GHz Wi-Fi 的 SSID 與密碼。
+   `secrets.h` 已被 `.gitignore` 排除,不會進版控;沒有這個檔案編譯會失敗
+   (`secrets.h: No such file or directory`),這是預期行為。
 2. `staticIP` / `gateway` → 改成你家網段(見下方 DHCP 的 Lesson Learned)
+3. `DIST_CLOSED_MM` / `DIST_OPEN_MM` → 實測後填入(見下方校正步驟)
+
+## 距離校正(第一次安裝必做)
+窗簾配件的百分比是用「門全關」與「門全開」兩端的距離線性內插算出來的,兩個數字沒填對就不準。
+兩種安裝方向都支援,`DIST_OPEN_MM` 比 `DIST_CLOSED_MM` 大或小都可以。
+
+1. 把 `VL53_CALIBRATION` 設為 `1` → 編譯燒錄。此時**只印距離,不更新 HomeKit 位置**。
+2. 手動把門全關,記下距離;再全開,記下距離。
+   (看網頁儀表板的「距離趨勢」圖比盯序列埠方便,而且校正模式下頁面會跳出紅色標籤提醒。)
+3. 把兩個數字填回:
+   ```cpp
+   #define DIST_CLOSED_MM    400      // 門全關時的距離
+   #define DIST_OPEN_MM      2000     // 門全開時的距離
+   ```
+4. **把 `VL53_CALIBRATION` 改回 `0` → 再燒錄一次**(不改回去的話 HomeKit 位置永遠是 0%)。
 
 ## 運作說明
 - 三個開關各自獨立,按下(On)就對應腳位輸出一個 PULSE_MS 脈衝,然後自動彈回 Off。
-- 不會回報門的實際開/關/移動中狀態,純粹是三顆觸發按鈕。
+  脈衝結束由 loop 非阻塞計時處理,不用 `delay()`,避免卡住 HomeKit 迴圈。
+- 窗簾配件每 500ms 讀一次 VL53L1X,換算成 0~100% 回報目前位置與開合狀態
+  (開啟中 / 關閉中 / 停止),位置變化超過 2% 才更新以去抖動。
+- 拖動滑桿設定目標位置時:目標比目前高 → 觸發開門,比目前低 → 觸發關門。
+  車庫門無法精準停在中間,所以這是「往哪個方向動」而非真正的定位控制。
 
 ## WiFi 逾時自動重開機
 裝置若**持續連不上 WiFi 超過 15 分鐘**就會自動 `ESP.restart()` 重開機,避免卡在斷線狀態需要手動拔電。涵蓋兩種情況:
@@ -122,6 +178,9 @@ FQBN 用 `esp8266:esp8266:d1`(WeMos D1 R1)時,`D1`=GPIO1(**UART TX!**)、`D2`=GP
 ```
 
 ## 加入 Apple 家庭
-家庭 App → 加入配件 → 沒有代碼 → 依序加入「開門」「關門」「暫停」三個配件 → 輸入 `111-11-111` → 仍要加入
+家庭 App → 加入配件 → 沒有代碼 → 依序加入「開門」「關門」「車庫門暫停」「車庫門」四個配件
+→ 輸入 `111-11-111` → 仍要加入
+
+前三個是觸發用的開關,第四個「車庫門」是窗簾配件,會顯示開啟百分比。
 
 > 若手機上已經配對過舊版(車庫門控制器)裝置,燒錄新版後請先在家庭 App 移除舊配件,再重新掃描加入,避免快取的配件資料與新結構不一致。
