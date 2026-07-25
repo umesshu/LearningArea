@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <WiFiUdp.h>
 #include <arduino_homekit_server.h>
 #include <Wire.h>
 #include <VL53L1X.h>
@@ -27,6 +28,19 @@ IPAddress dns1     (192, 168, 0, 1);    // DNS(用路由器即可)
 
 #define PULSE_MS        400      // 「上」「下」模擬按一下的脈衝長度
 #define PULSE_MS_PAUSE  1200     // 「暫停」模擬按一下的脈衝長度
+
+// ==================== 遠端監控(UDP → 樹莓派)====================
+// 所有除錯訊息除了走序列埠,也會以 UDP 廣播送到同網段的樹莓派收集器。
+// 用「廣播」而非固定 IP:樹莓派換 IP 也不必重燒韌體。
+// UDP 是 fire-and-forget,即使樹莓派關機也不會阻塞 HomeKit 迴圈。
+#define UDP_LOG_ENABLE       1
+#define UDP_LOG_PORT         5514     // 樹莓派收集器監聽的埠(需與 server.py 一致)
+#define UDP_TELEMETRY_MS     2000UL   // 每隔多久送一包 JSON 遙測
+
+WiFiUDP udpLog;
+IPAddress udpLogTarget;
+bool udpLogReady = false;
+unsigned long lastTelemetry = 0;
 
 // ==================== VL53L1X 車庫門位置感測 ====================
 // 接線:VL53L1X → 3V3 / GND / SDA / SCL
@@ -74,6 +88,73 @@ unsigned long lastRssiPrint = 0;
 #define WIFI_REBOOT_TIMEOUT_MS  (15UL * 60UL * 1000UL)   // 15 分鐘
 unsigned long lastWifiOkMs = 0;   // 最近一次 WiFi 為已連線的時間點
 
+// ==================== UDP 遠端 log ====================
+// 依目前 IP 與子網路遮罩算出廣播位址(例:192.168.0.222/24 → 192.168.0.255)
+void udpLogBegin() {
+#if UDP_LOG_ENABLE
+  uint32_t ip   = (uint32_t)WiFi.localIP();
+  uint32_t mask = (uint32_t)WiFi.subnetMask();
+  udpLogTarget = IPAddress(ip | ~mask);
+  udpLog.begin(UDP_LOG_PORT + 1);   // 本機來源埠,收不收都無所謂
+  udpLogReady = true;
+  Serial.print("[UDP] 除錯訊息廣播至 ");
+  Serial.print(udpLogTarget);
+  Serial.printf(":%d\n", UDP_LOG_PORT);
+#endif
+}
+
+void udpSend(const char *data, size_t len) {
+#if UDP_LOG_ENABLE
+  if (!udpLogReady || WiFi.status() != WL_CONNECTED) return;
+  if (udpLog.beginPacket(udpLogTarget, UDP_LOG_PORT)) {
+    udpLog.write((const uint8_t *)data, len);
+    udpLog.endPacket();
+  }
+#endif
+}
+
+// 取代 Serial.printf:同一份訊息同時進序列埠與 UDP。
+// 格式字串與原本完全相同,呼叫端只需改函式名。
+void netlogf(const char *fmt, ...) {
+  char buf[220];
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  if (n < 0) return;
+  if (n >= (int)sizeof(buf)) n = sizeof(buf) - 1;   // 過長就截斷
+  Serial.print(buf);
+  udpSend(buf, n);
+}
+
+// ---- 距離(mm)換算成開啟百分比 0~100(自動支援兩種安裝方向)----
+uint8_t distance_to_position(uint16_t mm) {
+  long lo = DIST_CLOSED_MM, hi = DIST_OPEN_MM;
+  long pos = (long)(mm - lo) * 100 / (hi - lo);   // 線性內插(hi<lo 時比例自動反向)
+  if (pos < 0)   pos = 0;
+  if (pos > 100) pos = 100;
+  return (uint8_t)pos;
+}
+
+// 定期送一包 JSON 遙測給樹莓派儀表板(以 '{' 開頭,收集器藉此和文字 log 區分)
+void sendTelemetry() {
+#if UDP_LOG_ENABLE
+  if (!udpLogReady || WiFi.status() != WL_CONNECTED) return;
+  char buf[256];
+  // 校正模式下 HomeKit 位置不會更新,這裡仍即時換算一份給網頁看
+  uint8_t pos = tofReady ? distance_to_position(lastDistanceMm) : 0;
+  int n = snprintf(buf, sizeof(buf),
+      "{\"t\":\"tel\",\"dist\":%u,\"pos\":%u,\"hkpos\":%d,\"target\":%d,"
+      "\"state\":%d,\"rssi\":%d,\"heap\":%u,\"up\":%lu,\"tof\":%d,\"cal\":%d}",
+      lastDistanceMm, pos,
+      cha_cover_current.value.int_value, cha_cover_target.value.int_value,
+      cha_cover_state.value.int_value, WiFi.RSSI(),
+      (unsigned)ESP.getFreeHeap(), millis() / 1000UL,
+      tofReady ? 1 : 0, VL53_CALIBRATION);
+  if (n > 0) udpSend(buf, (size_t)min(n, (int)sizeof(buf) - 1));
+#endif
+}
+
 // 顯示WiFi訊號強度(連線中/已連線皆可呼叫)
 void printWifiRssi() {
   // 即時讀一次距離(連線迴圈在 setup 內、loop 尚未跑,不能只靠 lastDistanceMm)
@@ -83,17 +164,17 @@ void printWifiRssi() {
   }
   if (WiFi.status() == WL_CONNECTED) {
     if (tofReady) {
-      Serial.printf("[WiFi] 已連線,訊號強度 RSSI=%d dBm,距離=%u mm\n",
-                    WiFi.RSSI(), lastDistanceMm);
+      netlogf("[WiFi] 已連線,訊號強度 RSSI=%d dBm,距離=%u mm\n",
+              WiFi.RSSI(), lastDistanceMm);
     } else {
-      Serial.printf("[WiFi] 已連線,訊號強度 RSSI=%d dBm,距離=N/A(感測器未就緒)\n",
-                    WiFi.RSSI());
+      netlogf("[WiFi] 已連線,訊號強度 RSSI=%d dBm,距離=N/A(感測器未就緒)\n",
+              WiFi.RSSI());
     }
   } else {
     if (tofReady) {
-      Serial.printf("[WiFi] 連線中,尚無訊號強度資料,距離=%u mm\n", lastDistanceMm);
+      netlogf("[WiFi] 連線中,尚無訊號強度資料,距離=%u mm\n", lastDistanceMm);
     } else {
-      Serial.println("[WiFi] 連線中,尚無訊號強度資料,距離=N/A(感測器未就緒)");
+      netlogf("[WiFi] 連線中,尚無訊號強度資料,距離=N/A(感測器未就緒)\n");
     }
   }
 }
@@ -122,7 +203,7 @@ void trigger_switch(uint8_t idx, const homekit_value_t value) {
     digitalWrite(sw.pin, HIGH);
     sw.active = true;
     sw.start = millis();
-    Serial.printf("[指令] %s\n", sw.label);
+    netlogf("[指令] %s\n", sw.label);
   }
 }
 
@@ -150,25 +231,16 @@ void cover_target_setter(const homekit_value_t value) {
   int current = cha_cover_current.value.int_value;
   cha_cover_target.value = value;   // 記住目標
   if (target > current + POS_CHANGE_THRESHOLD) {
-    Serial.printf("[窗簾] 目標 %d%% > 目前 %d%% → 開門\n", target, current);
+    netlogf("[窗簾] 目標 %d%% > 目前 %d%% → 開門\n", target, current);
     trigger_switch(0, HOMEKIT_BOOL_CPP(true));
     cha_cover_state.value = HOMEKIT_UINT8_CPP(1);   // 開啟中
     homekit_characteristic_notify(&cha_cover_state, cha_cover_state.value);
   } else if (target < current - POS_CHANGE_THRESHOLD) {
-    Serial.printf("[窗簾] 目標 %d%% < 目前 %d%% → 關門\n", target, current);
+    netlogf("[窗簾] 目標 %d%% < 目前 %d%% → 關門\n", target, current);
     trigger_switch(1, HOMEKIT_BOOL_CPP(true));
     cha_cover_state.value = HOMEKIT_UINT8_CPP(0);   // 關閉中
     homekit_characteristic_notify(&cha_cover_state, cha_cover_state.value);
   }
-}
-
-// ---- 距離(mm)換算成開啟百分比 0~100(自動支援兩種安裝方向)----
-uint8_t distance_to_position(uint16_t mm) {
-  long lo = DIST_CLOSED_MM, hi = DIST_OPEN_MM;
-  long pos = (long)(mm - lo) * 100 / (hi - lo);   // 線性內插(hi<lo 時比例自動反向)
-  if (pos < 0)   pos = 0;
-  if (pos > 100) pos = 100;
-  return (uint8_t)pos;
 }
 
 // ---- 讀取感測器並更新 HomeKit 位置 / 狀態 ----
@@ -179,14 +251,14 @@ void update_door_position() {
 
   uint16_t mm = tofSensor.read(false);   // 非阻塞讀取最新一次連續量測值
   if (tofSensor.timeoutOccurred()) {
-    Serial.println("[VL53] 讀取逾時");
+    netlogf("[VL53] 讀取逾時\n");
     return;
   }
   lastDistanceMm = mm;   // 供 printWifiRssi() 一併顯示
 
 #if VL53_CALIBRATION
   // 校正模式:只印距離,方便讀出門全關 / 全開兩端的 mm 值
-  Serial.printf("[VL53 校正] 距離 = %u mm\n", mm);
+  netlogf("[VL53 校正] 距離 = %u mm\n", mm);
   return;
 #else
   uint8_t pos = distance_to_position(mm);
@@ -195,7 +267,7 @@ void update_door_position() {
   if (abs((int)pos - prev) >= POS_CHANGE_THRESHOLD) {
     cha_cover_current.value = HOMEKIT_UINT8_CPP(pos);
     homekit_characteristic_notify(&cha_cover_current, cha_cover_current.value);
-    Serial.printf("[VL53] 距離 %u mm → 位置 %u%%\n", mm, pos);
+    netlogf("[VL53] 距離 %u mm → 位置 %u%%\n", mm, pos);
 
     // 依位置變化方向更新狀態(開啟中/關閉中);變化很小視為停止
     uint8_t state = (pos > prev + 1) ? 1 : (pos < prev - 1) ? 0 : 2;
@@ -306,8 +378,11 @@ void setup() {
   lastRssiPrint = millis();
   lastWifiOkMs = millis();   // 記錄已連線的時間點,供 loop() 判斷掉線
 
+  udpLogBegin();             // WiFi 就緒後才算得出廣播位址
+  netlogf("[系統] 開機完成,韌體 = 車庫門控制器 · 測距版\n");
+
   arduino_homekit_setup(&config);
-  Serial.println("[HomeKit] 就緒,配對碼 111-11-111");
+  netlogf("[HomeKit] 就緒,配對碼 111-11-111\n");
 }
 
 // ==================== loop ====================
@@ -322,11 +397,17 @@ void loop() {
     lastRssiPrint = millis();
   }
 
+  // 定期送 JSON 遙測給樹莓派儀表板
+  if (millis() - lastTelemetry >= UDP_TELEMETRY_MS) {
+    sendTelemetry();
+    lastTelemetry = millis();
+  }
+
   // WiFi 掉線監控:連線正常就更新時間戳;連續斷線超過 15 分鐘就重開機
   if (WiFi.status() == WL_CONNECTED) {
     lastWifiOkMs = millis();
   } else if (millis() - lastWifiOkMs >= WIFI_REBOOT_TIMEOUT_MS) {
-    Serial.println("[系統] WiFi 掉線超過 15 分鐘,重新開機...");
+    netlogf("[系統] WiFi 掉線超過 15 分鐘,重新開機...\n");
     Serial.flush();
     delay(100);
     ESP.restart();

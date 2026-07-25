@@ -1,0 +1,18 @@
+[Unit]
+Description=車庫門遙測收集器(UDP 5514 → 網頁 8080)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 依實際情況修改使用者與路徑
+User=pi
+WorkingDirectory=/home/pi/garage/pi_monitor
+ExecStart=/usr/bin/python3 /home/pi/garage/pi_monitor/server.py --port 8080 --udp-port 5514
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

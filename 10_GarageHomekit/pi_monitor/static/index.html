@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>GARAGE-01 · 車庫門遙測</title>
+<style>
+/* ============================================================
+   設計語彙:工控 HMI 面板 —— 冷藍灰機殼 + 琥珀背光
+   ============================================================ */
+:root {
+  --ground:  #0E1317;
+  --panel:   #151C22;
+  --panel-2: #1B242B;
+  --line:    #26313A;
+  --line-soft: #1F2932;
+  --ink:     #DCE4EA;
+  --ink-2:   #94A3AE;
+  --ink-3:   #64737F;
+  --accent:  #F0A93B;
+  --accent-soft: rgba(240, 169, 59, .14);
+  --ok:      #4FAE7F;
+  --warn:    #E0B03C;
+  --crit:    #DE5F4C;
+  --grid:    rgba(148, 163, 174, .13);
+  --shadow:  0 1px 2px rgba(0,0,0,.4);
+
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --font-sans: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+
+  --r: 4px;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --ground:  #E8ECEE;
+    --panel:   #FFFFFF;
+    --panel-2: #F3F6F8;
+    --line:    #D2DAE0;
+    --line-soft: #E3E9ED;
+    --ink:     #121A20;
+    --ink-2:   #4C5B65;
+    --ink-3:   #79878F;
+    --accent:  #A2650F;
+    --accent-soft: rgba(162, 101, 15, .10);
+    --ok:      #2C7A55;
+    --warn:    #8A6100;
+    --crit:    #A93826;
+    --grid:    rgba(60, 80, 95, .12);
+    --shadow:  0 1px 2px rgba(20,30,40,.08);
+  }
+}
+/* 檢視器的主題切換必須勝過上面的媒體查詢,兩個方向都要 */
+:root[data-theme="dark"] {
+  --ground:#0E1317; --panel:#151C22; --panel-2:#1B242B; --line:#26313A; --line-soft:#1F2932;
+  --ink:#DCE4EA; --ink-2:#94A3AE; --ink-3:#64737F;
+  --accent:#F0A93B; --accent-soft:rgba(240,169,59,.14);
+  --ok:#4FAE7F; --warn:#E0B03C; --crit:#DE5F4C;
+  --grid:rgba(148,163,174,.13); --shadow:0 1px 2px rgba(0,0,0,.4);
+}
+:root[data-theme="light"] {
+  --ground:#E8ECEE; --panel:#FFFFFF; --panel-2:#F3F6F8; --line:#D2DAE0; --line-soft:#E3E9ED;
+  --ink:#121A20; --ink-2:#4C5B65; --ink-3:#79878F;
+  --accent:#A2650F; --accent-soft:rgba(162,101,15,.10);
+  --ok:#2C7A55; --warn:#8A6100; --crit:#A93826;
+  --grid:rgba(60,80,95,.12); --shadow:0 1px 2px rgba(20,30,40,.08);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+b, strong { font-weight: 600; }
+
+/* ---------- 頂部狀態列 ---------- */
+.bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px;
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky; top: 0; z-index: 20;
+}
+.ident { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+.ident h1 {
+  margin: 0; font-family: var(--font-mono); font-size: 15px; font-weight: 600;
+  letter-spacing: .09em;
+}
+.ident .sub {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-3);
+  letter-spacing: .04em;
+}
+.bar-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.kv {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3);
+  letter-spacing: .05em; white-space: nowrap;
+}
+.kv b { color: var(--ink-2); font-variant-numeric: tabular-nums; margin-left: 5px; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.is-live { color: var(--ok); }
+.pill.is-live .dot { animation: blip 2s ease-in-out infinite; }
+.pill.is-stale { color: var(--warn); }
+.pill.is-down { color: var(--crit); }
+.pill.is-demo { color: var(--accent); background: var(--accent-soft); }
+@keyframes blip { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .pill .dot { animation: none; } }
+
+/* ---------- 版面 ---------- */
+main {
+  display: grid; gap: 14px; padding: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+@media (min-width: 1080px) {
+  main { grid-template-columns: minmax(0, 1fr) 380px; padding: 18px; gap: 18px; }
+  .rail { position: sticky; top: 74px; }
+}
+.stack { display: grid; gap: 14px; min-width: 0; }
+@media (min-width: 1080px) { .stack { gap: 18px; } }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.panel-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; border-bottom: 1px solid var(--line-soft);
+}
+.panel-head h2 {
+  margin: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: .13em; text-transform: uppercase; color: var(--ink-3);
+}
+.panel-head .spacer { margin-left: auto; }
+
+/* ---------- 門的狀態(主視覺)---------- */
+.door-body {
+  display: grid; gap: 18px; padding: 18px;
+  grid-template-columns: 148px minmax(0, 1fr);
+  align-items: center;
+}
+@media (max-width: 420px) { .door-body { grid-template-columns: 116px minmax(0,1fr); gap: 12px; padding: 14px; } }
+.door-svg { width: 100%; height: auto; display: block; }
+
+.readout { min-width: 0; }
+.readout .hero {
+  font-family: var(--font-mono); font-weight: 600;
+  font-size: clamp(44px, 12vw, 68px); line-height: .95;
+  letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+  display: flex; align-items: baseline; gap: 4px;
+}
+.readout .hero .unit { font-size: .38em; color: var(--ink-3); letter-spacing: 0; }
+.readout .caption {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+.chip {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .05em;
+  padding: 3px 8px; border-radius: var(--r);
+  background: var(--panel-2); border: 1px solid var(--line-soft); color: var(--ink-2);
+}
+.chip b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.chip.state-open   { color: var(--ok);   border-color: currentColor; }
+.chip.state-close  { color: var(--warn); border-color: currentColor; }
+.chip.state-stop   { color: var(--ink-2); }
+.chip.alert        { color: var(--crit); border-color: currentColor; }
+
+/* ---------- 數值磚 ---------- */
+.tiles { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.tile { padding: 13px 14px; }
+.tile .label {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.tile .value {
+  font-family: var(--font-mono); font-size: 27px; font-weight: 600;
+  font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+  margin-top: 5px; display: flex; align-items: baseline; gap: 4px;
+}
+.tile .value .unit { font-size: 12px; color: var(--ink-3); font-weight: 400; }
+.tile .note { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); margin-top: 4px; }
+
+/* 訊號格 —— 用形狀而不只是顏色表示強弱 */
+.bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 13px; margin-left: 8px; }
+.bars i { width: 3px; background: var(--line); border-radius: 1px; display: block; }
+.bars i:nth-child(1) { height: 25%; } .bars i:nth-child(2) { height: 50%; }
+.bars i:nth-child(3) { height: 75%; } .bars i:nth-child(4) { height: 100%; }
+.bars i.on { background: var(--accent); }
+
+/* ---------- 圖表 ---------- */
+.charts { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.chart-wrap { position: relative; padding: 6px 10px 10px; }
+.chart-wrap svg { width: 100%; height: 118px; display: block; overflow: visible; touch-action: pan-y; }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-area { fill: var(--accent); opacity: .1; }
+.chart-grid { stroke: var(--grid); stroke-width: 1; }
+.chart-end { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.chart-cross { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0; }
+.chart-hit { fill: var(--ink); opacity: 0; }
+.chart-empty {
+  font-family: var(--font-mono); font-size: 11px; fill: var(--ink-3); letter-spacing: .08em;
+}
+.axis-label {
+  font-family: var(--font-mono); font-size: 10px; fill: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.tip {
+  position: absolute; pointer-events: none; opacity: 0; transform: translate(-50%, -100%);
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 5px 9px; box-shadow: var(--shadow);
+  font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap;
+  font-variant-numeric: tabular-nums; color: var(--ink); z-index: 5;
+  transition: opacity .1s;
+}
+.tip .t-time { color: var(--ink-3); margin-right: 8px; }
+
+/* ---------- 歷史資料表 ---------- */
+details.table-view { border-top: 1px solid var(--line-soft); }
+details.table-view > summary {
+  padding: 9px 14px; cursor: pointer; list-style: none;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+details.table-view > summary::-webkit-details-marker { display: none; }
+details.table-view > summary::before { content: "▸ "; }
+details.table-view[open] > summary::before { content: "▾ "; }
+details.table-view > summary:hover { color: var(--ink); }
+.table-scroll { overflow-x: auto; max-height: 220px; overflow-y: auto; }
+table { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: 11.5px; }
+th, td { padding: 4px 14px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th {
+  position: sticky; top: 0; background: var(--panel);
+  color: var(--ink-3); font-weight: 600; letter-spacing: .08em;
+  border-bottom: 1px solid var(--line-soft); text-transform: uppercase; font-size: 10px;
+}
+tbody tr:nth-child(even) { background: var(--panel-2); }
+
+/* ---------- Log ---------- */
+.log-panel { display: flex; flex-direction: column; max-height: 62vh; }
+@media (min-width: 1080px) { .log-panel { max-height: calc(100vh - 108px); } }
+.log-filters { display: flex; gap: 5px; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
+.btn {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .05em;
+  padding: 3px 9px; border-radius: var(--r); cursor: pointer;
+  background: transparent; border: 1px solid var(--line); color: var(--ink-3);
+}
+.btn:hover { color: var(--ink); border-color: var(--ink-3); }
+.btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.btn:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.log-stream {
+  flex: 1; overflow-y: auto; padding: 6px 0 10px;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
+  overscroll-behavior: contain;
+}
+.log-row { display: grid; grid-template-columns: 62px 74px minmax(0, 1fr); gap: 8px; padding: 2px 12px; }
+.log-row:hover { background: var(--panel-2); }
+.log-time { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.log-tag { letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-msg { color: var(--ink); word-break: break-word; }
+.tag-cmd    { color: var(--accent); }
+.tag-vl53   { color: var(--ok); }
+.tag-wifi   { color: var(--ink-2); }
+.tag-sys    { color: var(--crit); }
+.tag-other  { color: var(--ink-3); }
+.log-empty { padding: 24px 14px; color: var(--ink-3); font-family: var(--font-mono); font-size: 12px; }
+
+footer {
+  padding: 4px 18px 24px; color: var(--ink-3);
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em;
+}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="ident">
+    <h1>GARAGE-01</h1>
+    <span class="sub">WeMos D1 R1 · VL53L1X</span>
+  </div>
+  <div class="bar-stats">
+    <span class="pill is-down" id="conn"><span class="dot"></span><span id="conn-text">等待資料</span></span>
+    <span class="kv">來源<b id="src">—</b></span>
+    <span class="kv">運行<b id="uptime">—</b></span>
+    <span class="kv">最後封包<b id="age">—</b></span>
+    <span class="kv">封包數<b id="packets">0</b></span>
+  </div>
+</header>
+
+<main>
+  <div class="stack">
+
+    <!-- 門的位置:主視覺 -->
+    <section class="panel">
+      <div class="panel-head"><h2>車庫門位置</h2><span class="spacer"></span>
+        <span class="kv" id="cal-flag"></span>
+      </div>
+      <div class="door-body">
+        <!-- 正視圖:捲門往上收合,虛線為 ToF 雷射量測路徑 -->
+        <svg class="door-svg" viewBox="0 0 148 176" role="img" aria-labelledby="door-title">
+          <title id="door-title">車庫門開合示意圖</title>
+          <!-- 開口 -->
+          <rect x="14" y="12" width="94" height="140" fill="var(--panel-2)" stroke="var(--line)" stroke-width="1.5"/>
+          <!-- 門板(捲門,由上往下覆蓋) -->
+          <g id="door-panel">
+            <rect id="door-rect" x="16" y="14" width="90" height="136" fill="var(--accent)" opacity=".22"/>
+            <g id="door-slats" stroke="var(--accent)" stroke-width="1" opacity=".55"></g>
+          </g>
+          <!-- 雷射量測路徑 -->
+          <line id="laser" x1="61" y1="150" x2="61" y2="150" stroke="var(--crit)" stroke-width="1.5" stroke-dasharray="3 3"/>
+          <!-- 感測器 -->
+          <rect x="55" y="152" width="12" height="8" rx="1" fill="var(--panel-2)" stroke="var(--ink-3)" stroke-width="1"/>
+          <text x="61" y="170" text-anchor="middle" class="axis-label">VL53L1X</text>
+          <!-- 刻度尺 -->
+          <g stroke="var(--line)" stroke-width="1">
+            <line x1="112" y1="14" x2="118" y2="14"/><line x1="112" y1="48" x2="116" y2="48"/>
+            <line x1="112" y1="82" x2="118" y2="82"/><line x1="112" y1="116" x2="116" y2="116"/>
+            <line x1="112" y1="150" x2="118" y2="150"/>
+          </g>
+          <text x="122" y="17" class="axis-label">100</text>
+          <text x="122" y="85" class="axis-label">50</text>
+          <text x="122" y="153" class="axis-label">0</text>
+        </svg>
+
+        <div class="readout">
+          <div class="caption">開啟程度</div>
+          <div class="hero"><span id="pos">—</span><span class="unit">%</span></div>
+          <div class="chips">
+            <span class="chip state-stop" id="state-chip">狀態 —</span>
+            <span class="chip">量測 <b id="dist">—</b> mm</span>
+            <span class="chip">HomeKit 目標 <b id="target">—</b>%</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 數值磚 -->
+    <div class="tiles">
+      <div class="panel tile">
+        <div class="label">WiFi 訊號</div>
+        <div class="value"><span id="rssi">—</span><span class="unit">dBm</span>
+          <span class="bars" id="rssi-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        </div>
+        <div class="note" id="rssi-note">—</div>
+      </div>
+      <div class="panel tile">
+        <div class="label">可用記憶體</div>
+        <div class="value"><span id="heap">—</span><span class="unit">KB</span></div>
+        <div class="note" id="heap-note">ESP8266 free heap</div>
+      </div>
+      <div class="panel tile">
+        <div class="label">量測距離</div>
+        <div class="value"><span id="dist2">—</span><span class="unit">mm</span></div>
+        <div class="note" id="tof-note">—</div>
+      </div>
+      <div class="panel tile">
+        <div class="label">遙測頻率</div>
+        <div class="value"><span id="rate">—</span><span class="unit">/ 分</span></div>
+        <div class="note">封包抵達速率</div>
+      </div>
+    </div>
+
+    <!-- 趨勢圖 -->
+    <div class="charts">
+      <section class="panel">
+        <div class="panel-head"><h2>距離趨勢</h2><span class="spacer"></span><span class="kv" id="dist-range">—</span></div>
+        <div class="chart-wrap" id="wrap-dist">
+          <svg id="chart-dist" preserveAspectRatio="none" aria-label="距離歷史趨勢圖"></svg>
+          <div class="tip" id="tip-dist"></div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>訊號強度趨勢</h2><span class="spacer"></span><span class="kv" id="rssi-range">—</span></div>
+        <div class="chart-wrap" id="wrap-rssi">
+          <svg id="chart-rssi" preserveAspectRatio="none" aria-label="WiFi 訊號強度歷史趨勢圖"></svg>
+          <div class="tip" id="tip-rssi"></div>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <details class="table-view">
+        <summary>歷史數值表(最近 20 筆)</summary>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>時間</th><th>距離 mm</th><th>位置 %</th><th>RSSI dBm</th><th>Heap KB</th></tr></thead>
+            <tbody id="hist-body"></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <!-- Log 串流 -->
+  <aside class="panel log-panel rail">
+    <div class="panel-head"><h2>除錯訊息</h2><span class="spacer"></span>
+      <button class="btn" id="btn-follow" aria-pressed="true">自動捲動</button>
+    </div>
+    <div class="log-filters" role="group" aria-label="訊息篩選">
+      <button class="btn" data-filter="all" aria-pressed="true">全部</button>
+      <button class="btn" data-filter="指令" aria-pressed="false">指令</button>
+      <button class="btn" data-filter="VL53" aria-pressed="false">VL53</button>
+      <button class="btn" data-filter="WiFi" aria-pressed="false">WiFi</button>
+      <button class="btn" data-filter="系統" aria-pressed="false">系統</button>
+    </div>
+    <div class="log-stream" id="log" role="log" aria-live="polite">
+      <div class="log-empty">尚無訊息。</div>
+    </div>
+  </aside>
+</main>
+
+<footer id="foot">UDP :5514 → SSE /events</footer>
+
+<script>
+"use strict";
+
+/* ============================================================
+   狀態
+   ============================================================ */
+const MAX_HISTORY = 240;
+const MAX_LOGS = 400;
+let OFFLINE_AFTER = 12;          // 秒;伺服器會在快照裡覆寫
+
+const state = {
+  latest: null,
+  history: [],
+  logs: [],
+  lastSeen: 0,
+  packets: 0,
+  demo: false,
+  connected: false,
+  follow: true,
+  filter: "all",
+};
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d = 0) => (n === null || n === undefined || Number.isNaN(n)) ? "—" : Number(n).toFixed(d);
+
+function clockOf(ts) {
+  const d = new Date(ts * 1000);
+  return String(d.getHours()).padStart(2, "0") + ":" +
+         String(d.getMinutes()).padStart(2, "0") + ":" +
+         String(d.getSeconds()).padStart(2, "0");
+}
+function durationOf(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  if (h) return h + "時 " + String(m).padStart(2, "0") + "分";
+  if (m) return m + "分 " + String(s).padStart(2, "0") + "秒";
+  return s + " 秒";
+}
+
+/* ============================================================
+   資料進來
+   ============================================================ */
+function applySnapshot(snap) {
+  if (snap.offline_after) OFFLINE_AFTER = snap.offline_after;
+  state.latest = snap.latest || null;
+  state.history = snap.history || [];
+  state.logs = snap.logs || [];
+  state.lastSeen = snap.last_seen || 0;
+  state.packets = snap.packets || 0;
+  renderLogs();
+  renderAll();
+}
+
+function pushTelemetry(d) {
+  state.latest = d;
+  state.lastSeen = d.ts || (Date.now() / 1000);
+  state.packets++;
+  state.history.push({ ts: state.lastSeen, dist: d.dist, pos: d.pos, rssi: d.rssi, heap: d.heap });
+  if (state.history.length > MAX_HISTORY) state.history.shift();
+  renderAll();
+}
+
+function pushLog(entry) {
+  state.logs.push(entry);
+  if (state.logs.length > MAX_LOGS) state.logs.shift();
+  state.lastSeen = entry.ts;
+  state.packets++;
+  appendLogRow(entry);
+}
+
+/* ============================================================
+   連線:SSE;連不上就切示範資料
+   ============================================================ */
+function connect() {
+  let opened = false;
+  let source;
+  try {
+    source = new EventSource("/events");
+  } catch (err) {
+    startDemo();
+    return;
+  }
+
+  const fallback = setTimeout(() => { if (!opened) { try { source.close(); } catch (e) {} startDemo(); } }, 2500);
+
+  source.onmessage = (ev) => {
+    opened = true;
+    clearTimeout(fallback);
+    state.demo = false;
+    state.connected = true;
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (msg.type === "snapshot") applySnapshot(msg);
+    else if (msg.type === "tel") pushTelemetry(msg.data);
+    else if (msg.type === "log") pushLog(msg.data);
+  };
+  source.onerror = () => {
+    state.connected = false;
+    if (!opened) { clearTimeout(fallback); try { source.close(); } catch (e) {} startDemo(); }
+    renderStatus();
+  };
+}
+
+/* ---- 示範資料:讓頁面在沒有樹莓派時也能檢視外觀 ---- */
+function startDemo() {
+  if (state.demo) return;
+  state.demo = true;
+  $("foot").textContent = "示範資料 —— 未連上收集器,顯示的是模擬數值";
+
+  const CLOSED = 400, OPEN = 2000;
+  let pos = 0, dir = 0, hold = 8;
+
+  const step = (ts) => {
+    if (hold > 0) { hold--; } else {
+      if (dir === 0) { dir = pos > 50 ? -1 : 1; }
+      pos += dir * (6 + Math.random() * 4);
+      if (pos >= 100) { pos = 100; dir = 0; hold = 14; demoLog("[窗簾] 目標 100% > 目前 94% → 開門"); }
+      if (pos <= 0)   { pos = 0;   dir = 0; hold = 14; demoLog("[指令] 關門"); }
+    }
+    const dist = Math.round(CLOSED + (OPEN - CLOSED) * pos / 100 + (Math.random() * 12 - 6));
+    const rssi = Math.round(-56 + Math.sin(Date.now() / 9000) * 5 + (Math.random() * 4 - 2));
+    pushTelemetry({
+      t: "tel", dist, pos: Math.round(pos), hkpos: Math.round(pos),
+      target: dir > 0 ? 100 : (dir < 0 ? 0 : Math.round(pos)),
+      state: dir > 0 ? 1 : (dir < 0 ? 0 : 2),
+      rssi, heap: 28000 + Math.round(Math.random() * 900),
+      up: Math.round(performance.now() / 1000) + 4820, tof: 1, cal: 0,
+      ts: ts || Date.now() / 1000, src: "示範",
+    });
+    if (Math.random() < 0.35) demoLog("[VL53] 距離 " + dist + " mm → 位置 " + Math.round(pos) + "%");
+    if (Math.random() < 0.18) demoLog("[WiFi] 已連線,訊號強度 RSSI=" + rssi + " dBm,距離=" + dist + " mm");
+  };
+
+  const demoLog = (line) => pushLog({ ts: Date.now() / 1000, line, src: "示範" });
+
+  // 先填一段歷史,圖表才不是空的;時間往回推,時間軸才像真的跑了幾分鐘
+  const now0 = Date.now() / 1000;
+  for (let i = 0; i < 40; i++) step(now0 - (40 - i) * 2);
+  demoLog("[系統] 開機完成,韌體 = 車庫門控制器 · 測距版");
+  setInterval(step, 2000);
+  renderAll();
+}
+
+/* ============================================================
+   繪製:狀態列
+   ============================================================ */
+function renderStatus() {
+  const age = state.lastSeen ? (Date.now() / 1000 - state.lastSeen) : Infinity;
+  const pill = $("conn"), text = $("conn-text");
+  pill.className = "pill";
+  if (state.demo) { pill.classList.add("is-demo"); text.textContent = "示範資料"; }
+  else if (!state.lastSeen) { pill.classList.add("is-down"); text.textContent = "等待資料"; }
+  else if (age > OFFLINE_AFTER * 3) { pill.classList.add("is-down"); text.textContent = "離線"; }
+  else if (age > OFFLINE_AFTER) { pill.classList.add("is-stale"); text.textContent = "訊號中斷"; }
+  else { pill.classList.add("is-live"); text.textContent = "連線正常"; }
+
+  $("age").textContent = state.lastSeen ? (age < 2 ? "剛剛" : Math.floor(age) + " 秒前") : "—";
+  $("packets").textContent = state.packets;
+
+  const d = state.latest;
+  $("src").textContent = d && d.src ? d.src : "—";
+  $("uptime").textContent = d && d.up ? durationOf(d.up) : "—";
+}
+
+/* ---- 門的圖形 + 主要數值 ---- */
+const DOOR_TOP = 14, DOOR_H = 136;
+
+function renderDoor() {
+  const d = state.latest;
+  const pos = d ? Number(d.pos) : null;
+  const shown = pos === null ? 0 : Math.max(0, Math.min(100, pos));
+
+  // 捲門往上收:覆蓋高度 = (100 - 開啟度) 的比例
+  const h = DOOR_H * (100 - shown) / 100;
+  const rect = $("door-rect");
+  rect.setAttribute("y", DOOR_TOP);
+  rect.setAttribute("height", Math.max(0, h).toFixed(1));
+
+  // 門板橫向溝槽,讓它看得出是捲門而不是一塊色塊
+  const slats = [];
+  for (let y = DOOR_TOP + 12; y < DOOR_TOP + h - 2; y += 12) {
+    slats.push('<line x1="16" y1="' + y.toFixed(1) + '" x2="106" y2="' + y.toFixed(1) + '"/>');
+  }
+  $("door-slats").innerHTML = slats.join("");
+
+  // 雷射:從感測器射到門板下緣
+  const laser = $("laser");
+  laser.setAttribute("y1", 150);
+  laser.setAttribute("y2", (DOOR_TOP + h).toFixed(1));
+
+  $("pos").textContent = pos === null ? "—" : Math.round(pos);
+  $("dist").textContent = d ? d.dist : "—";
+  $("dist2").textContent = d ? d.dist : "—";
+  $("target").textContent = d && d.target !== undefined ? d.target : "—";
+
+  const chip = $("state-chip");
+  const labels = { 0: ["關閉中", "state-close"], 1: ["開啟中", "state-open"], 2: ["靜止", "state-stop"] };
+  const [label, cls] = d && labels[d.state] ? labels[d.state] : ["—", "state-stop"];
+  chip.className = "chip " + cls;
+  chip.textContent = "狀態 " + label;
+
+  $("cal-flag").innerHTML = d && d.cal
+    ? '<span class="chip alert">校正模式 —— HomeKit 位置未更新</span>' : "";
+  $("tof-note").textContent = d ? (d.tof ? "VL53L1X 就緒" : "感測器未就緒") : "—";
+}
+
+/* ---- 數值磚 ---- */
+function renderTiles() {
+  const d = state.latest;
+  const rssi = d ? Number(d.rssi) : null;
+  $("rssi").textContent = rssi === null ? "—" : rssi;
+
+  // -50 以上 4 格,每 10dBm 少一格
+  const level = rssi === null ? 0 : Math.max(0, Math.min(4, Math.ceil((rssi + 90) / 10)));
+  const bars = $("rssi-bars").children;
+  for (let i = 0; i < bars.length; i++) bars[i].classList.toggle("on", i < level);
+  const quality = ["無訊號", "微弱", "尚可", "良好", "極佳"][level];
+  $("rssi-note").textContent = rssi === null ? "—" : quality;
+
+  $("heap").textContent = d && d.heap ? (d.heap / 1024).toFixed(1) : "—";
+  $("heap-note").textContent = d && d.heap
+    ? (d.heap < 12000 ? "偏低 —— 留意記憶體不足重開" : "ESP8266 free heap") : "ESP8266 free heap";
+
+  // 用最近一分鐘實際收到的筆數,而不是用設定值推算
+  const cutoff = Date.now() / 1000 - 60;
+  const recent = state.history.filter((h) => h.ts >= cutoff).length;
+  $("rate").textContent = state.history.length < 2 ? "—" : recent;
+}
+
+/* ============================================================
+   圖表:單一序列折線 + 面積 + 端點強調 + 十字準線
+   ============================================================ */
+const CH = { w: 300, h: 118, padT: 12, padB: 18, padL: 4, padR: 4 };
+
+function drawChart(svgId, tipId, key, opts) {
+  const svg = $(svgId), tip = $(tipId);
+  const pts = state.history.filter((h) => h[key] !== undefined && h[key] !== null);
+  svg.setAttribute("viewBox", "0 0 " + CH.w + " " + CH.h);
+
+  if (pts.length < 2) {
+    svg.innerHTML = '<text x="' + (CH.w / 2) + '" y="' + (CH.h / 2) +
+      '" text-anchor="middle" class="chart-empty">等待資料…</text>';
+    return;
+  }
+
+  const vals = pts.map((p) => Number(p[key]));
+  let lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+  const span = hi - lo || Math.max(1, Math.abs(hi) * 0.1);
+  lo -= span * 0.15; hi += span * 0.15;
+
+  const x = (i) => CH.padL + (CH.w - CH.padL - CH.padR) * (i / (pts.length - 1));
+  const y = (v) => CH.padT + (CH.h - CH.padT - CH.padB) * (1 - (v - lo) / (hi - lo));
+
+  let line = "", area = "";
+  vals.forEach((v, i) => {
+    const cmd = i === 0 ? "M" : "L";
+    line += cmd + x(i).toFixed(1) + " " + y(v).toFixed(1) + " ";
+  });
+  area = line + "L" + x(vals.length - 1).toFixed(1) + " " + (CH.h - CH.padB) +
+         " L" + x(0).toFixed(1) + " " + (CH.h - CH.padB) + " Z";
+
+  // 三條淡格線,只為了讀值,不搶戲
+  let grid = "";
+  [0, 0.5, 1].forEach((f) => {
+    const gy = (CH.padT + (CH.h - CH.padT - CH.padB) * f).toFixed(1);
+    grid += '<line class="chart-grid" x1="0" y1="' + gy + '" x2="' + CH.w + '" y2="' + gy + '"/>';
+  });
+
+  const lastV = vals[vals.length - 1];
+  // 軸標籤標的是「實際的最大/最小值」,不是為了留白而外擴的域值,
+  // 並貼齊該點的高度,讀圖時不會誤以為線碰到了那個數字
+  const dMax = Math.max.apply(null, vals), dMin = Math.min.apply(null, vals);
+  const yMaxLbl = Math.max(9, y(dMax) - 5);
+  const yMinLbl = Math.min(CH.h - 4, y(dMin) + 11);
+
+  svg.innerHTML =
+    grid +
+    '<path class="chart-area" d="' + area + '"/>' +
+    '<path class="chart-line" d="' + line + '"/>' +
+    '<text class="axis-label" x="2" y="' + yMaxLbl.toFixed(1) + '">' + opts.fmt(dMax) + '</text>' +
+    '<text class="axis-label" x="2" y="' + yMinLbl.toFixed(1) + '">' + opts.fmt(dMin) + '</text>' +
+    '<line class="chart-cross" id="' + svgId + '-cross" x1="0" y1="' + CH.padT + '" x2="0" y2="' + (CH.h - CH.padB) + '"/>' +
+    '<circle class="chart-end" id="' + svgId + '-hover" cx="0" cy="0" r="4" style="opacity:0"/>' +
+    '<circle class="chart-end" cx="' + x(vals.length - 1).toFixed(1) + '" cy="' + y(lastV).toFixed(1) + '" r="4"/>' +
+    '<rect class="chart-hit" x="0" y="0" width="' + CH.w + '" height="' + CH.h + '"/>';
+
+  // 標頭寫時間跨度(軸上已經有數值範圍了,不重複同一件事)
+  const spanS = pts[pts.length - 1].ts - pts[0].ts;
+  $(opts.rangeId).textContent = "近 " + durationOf(spanS) + " · " + pts.length + " 筆";
+
+  // ---- 滑鼠/觸控:找最近的點 ----
+  const cross = $(svgId + "-cross"), marker = $(svgId + "-hover");
+  const move = (ev) => {
+    const rect = svg.getBoundingClientRect();
+    const cx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+    const ratio = Math.max(0, Math.min(1, cx / rect.width));
+    const i = Math.round(ratio * (pts.length - 1));
+    const px = x(i), py = y(vals[i]);
+    cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.style.opacity = "1";
+    marker.setAttribute("cx", px); marker.setAttribute("cy", py); marker.style.opacity = "1";
+    tip.style.opacity = "1";
+    tip.style.left = (px / CH.w * rect.width) + "px";
+    tip.style.top = (py / CH.h * rect.height - 6) + "px";
+    tip.innerHTML = '<span class="t-time">' + clockOf(pts[i].ts) + "</span>" +
+                    opts.fmt(vals[i]) + " " + opts.unit;
+  };
+  const leave = () => { cross.style.opacity = "0"; marker.style.opacity = "0"; tip.style.opacity = "0"; };
+  svg.addEventListener("mousemove", move);
+  svg.addEventListener("mouseleave", leave);
+  svg.addEventListener("touchmove", move, { passive: true });
+  svg.addEventListener("touchend", leave);
+}
+
+function renderCharts() {
+  drawChart("chart-dist", "tip-dist", "dist", { fmt: (v) => Math.round(v), unit: "mm", rangeId: "dist-range" });
+  drawChart("chart-rssi", "tip-rssi", "rssi", { fmt: (v) => Math.round(v), unit: "dBm", rangeId: "rssi-range" });
+}
+
+/* ---- 歷史數值表 ---- */
+function renderTable() {
+  const rows = state.history.slice(-20).reverse().map((h) =>
+    "<tr><td>" + clockOf(h.ts) + "</td><td>" + h.dist + "</td><td>" + h.pos +
+    "</td><td>" + h.rssi + "</td><td>" + (h.heap ? (h.heap / 1024).toFixed(1) : "—") + "</td></tr>");
+  $("hist-body").innerHTML = rows.join("") ||
+    '<tr><td colspan="5" style="text-align:left;color:var(--ink-3)">尚無資料</td></tr>';
+}
+
+/* ============================================================
+   Log 串流
+   ============================================================ */
+function tagOf(line) {
+  const m = line.match(/^\[([^\]]+)\]/);
+  return m ? m[1] : "";
+}
+function tagClass(tag) {
+  if (tag.indexOf("指令") === 0 || tag.indexOf("窗簾") === 0) return "tag-cmd";
+  if (tag.indexOf("VL53") === 0) return "tag-vl53";
+  if (tag.indexOf("WiFi") === 0) return "tag-wifi";
+  if (tag.indexOf("系統") === 0) return "tag-sys";
+  return "tag-other";
+}
+function passesFilter(line) {
+  if (state.filter === "all") return true;
+  return tagOf(line).indexOf(state.filter) === 0;
+}
+
+function rowHTML(entry) {
+  const tag = tagOf(entry.line);
+  const msg = tag ? entry.line.slice(tag.length + 2).trim() : entry.line;
+  return '<div class="log-row" data-tag="' + escapeHTML(tag) + '">' +
+    '<span class="log-time">' + clockOf(entry.ts) + "</span>" +
+    '<span class="log-tag ' + tagClass(tag) + '">' + escapeHTML(tag) + "</span>" +
+    '<span class="log-msg">' + escapeHTML(msg) + "</span></div>";
+}
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function renderLogs() {
+  const box = $("log");
+  const visible = state.logs.filter((e) => passesFilter(e.line));
+  box.innerHTML = visible.length ? visible.map(rowHTML).join("")
+    : '<div class="log-empty">此篩選條件下沒有訊息。</div>';
+  if (state.follow) box.scrollTop = box.scrollHeight;
+}
+
+function appendLogRow(entry) {
+  if (!passesFilter(entry.line)) return;
+  const box = $("log");
+  const empty = box.querySelector(".log-empty");
+  if (empty) empty.remove();
+  box.insertAdjacentHTML("beforeend", rowHTML(entry));
+  while (box.children.length > MAX_LOGS) box.removeChild(box.firstChild);
+  if (state.follow) box.scrollTop = box.scrollHeight;
+}
+
+/* ============================================================
+   繪製總入口 + 事件
+   ============================================================ */
+function renderAll() {
+  renderStatus();
+  renderDoor();
+  renderTiles();
+  renderCharts();
+  renderTable();
+}
+
+document.querySelectorAll("[data-filter]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.filter = btn.dataset.filter;
+    document.querySelectorAll("[data-filter]").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b === btn)));
+    renderLogs();
+  });
+});
+
+$("btn-follow").addEventListener("click", () => {
+  state.follow = !state.follow;
+  $("btn-follow").setAttribute("aria-pressed", String(state.follow));
+  if (state.follow) { const box = $("log"); box.scrollTop = box.scrollHeight; }
+});
+
+setInterval(renderStatus, 1000);   // 「最後封包 N 秒前」要自己走
+
+connect();
+renderAll();
+</script>
+</body>
+</html>
