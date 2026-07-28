@@ -89,15 +89,67 @@ python3 server.py --port 8080 --udp-port 5514 --bind 0.0.0.0
 
 要從外面連，方向有三種：
 
-| 方案 | 網址 | 費用 | 要動路由器嗎 |
-|---|---|---|---|
-| Tailscale 等 VPN | 私有位址 | 免費（個人） | 不用 |
-| Cloudflare Tunnel + 自有網域 | 固定，自動 HTTPS | 網域年費 | 不用 |
-| 連接埠轉發 + DDNS | 固定 | 免費 | 要，且會暴露對外 IP |
+| 方案 | 網址 | 費用 | 要動路由器嗎 | 誰連得到 |
+|---|---|---|---|---|
+| **Tailscale**（本專案已支援） | 私有位址 / MagicDNS | 免費（個人） | 不用 | 只有你自己的裝置 |
+| Cloudflare Tunnel + 自有網域 | 固定，自動 HTTPS | 網域年費 | 不用 | 任何人 |
+| 連接埠轉發 + DDNS | 固定 | 免費 | 要，且會暴露對外 IP | 任何人 |
 
-⚠️ **`server.py` 目前沒有任何身分驗證**，是照「只在區網內使用」設計的。
-若要讓它能從公網存取，請先加上驗證機制 —— 否則等於把車庫門的即時狀態、
-WiFi 資訊與完整 log 公開廣播。VPN 方案不需要改程式，因為網路層已經限定了來源。
+⚠️ **`server.py` 沒有任何身分驗證**，是照「只在區網內使用」設計的。
+下面兩種「任何人都連得到」的方案，請先自行加上驗證機制再用 —— 否則等於把車庫門的
+即時狀態、WiFi 資訊與完整 log 公開廣播。Tailscale 不需要改程式，因為限制發生在網路層。
+
+## 從外面連：Tailscale
+
+Tailscale 在你的裝置之間建一個私有虛擬網路。樹莓派和手機各自**主動向外**建立連線，
+所以不需要連接埠轉發、不需要固定 IP 或 DDNS，就算你家在 CGNAT 後面也能通。
+個人方案免費（100 台裝置）。
+
+```bash
+cd ~/gemini_workspace/LearningArea/10_GarageHomekit/pi_monitor
+sudo ./setup_tailscale.sh
+```
+
+腳本會加入官方套件來源、安裝 tailscale、啟動 `tailscaled` 並設為開機自動執行，
+最後印出一個授權網址 —— 用瀏覽器打開登入即可（Google / Apple / GitHub 帳號都行）。
+手機端安裝 Tailscale App 登入**同一個帳號**就完成配對。
+
+完成後在任何已登入的裝置上開：
+
+```
+http://100.x.x.x:8080/        ← tailscale ip -4 印出的位址
+http://garage-pi:8080/        ← 需在 Tailscale 後台開啟 MagicDNS
+```
+
+`server.py` 不必做任何修改：它綁在 `0.0.0.0`，本來就會一併服務 `tailscale0` 這個介面。
+
+### 常用指令
+
+```bash
+tailscale status              # 看有哪些裝置在線
+tailscale ip -4               # 本機的 tailnet 位址
+sudo tailscale down           # 暫時離線（服務仍在，只是不連 tailnet）
+sudo tailscale up             # 重新上線
+```
+
+### 想要 HTTPS（選用）
+
+```bash
+sudo tailscale serve --bg 8080
+```
+
+會在 tailnet 內給一個 `https://garage-pi.<你的tailnet>.ts.net` 的網址，憑證自動處理，
+免去瀏覽器的「不安全」警告。關掉用 `sudo tailscale serve --https=443 off`。
+
+### 移除
+
+```bash
+sudo tailscale down
+sudo apt-get remove --purge tailscale
+sudo rm -f /etc/apt/sources.list.d/tailscale.list /usr/share/keyrings/tailscale-archive-keyring.gpg
+```
+
+記得也到 Tailscale 後台把這台裝置刪掉。
 
 ## 疑難排解
 

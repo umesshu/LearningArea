@@ -11,7 +11,7 @@ Home App 裡有四個配件:三個獨立開關「開門」「關門」「暫停�
 - `secrets.h` — WiFi 帳密(**不進版控**,由 `.gitignore` 排除)
 - `secrets.h.example` — 上面那份的範本,第一次使用時複製改名
 - `log_serial.py` — 序列埠記錄工具
-- `pi_monitor/` — 樹莓派端的遙測收集器與網頁儀表板(見該資料夾的 README)
+- `pi_monitor/` — 樹莓派端的遙測收集器與網頁儀表板,含 Tailscale 遠端存取(見該資料夾的 README)
 
 ## 電路
 | 功能 | Wemos 腳 | GPIO | 接遙控器按鈕 |
@@ -69,6 +69,9 @@ arduino-cli monitor -p /dev/ttyUSB0 -c baudrate=115200
 用 UDP 而不是 MQTT / HTTP,是因為 `arduino_homekit_loop()` 不能被阻塞 ——
 UDP 送出即忘,樹莓派關機也不會拖慢韌體;TCP 在對方無回應時可能卡住數百毫秒導致 HomeKit 逾時。
 廣播位址由 IP 與遮罩自動算出,樹莓派換 IP 不必重燒韌體。
+
+儀表板預設只在區域網路內看得到。要從外面連，`pi_monitor/setup_tailscale.sh` 會把
+Tailscale 裝起來，手機在行動網路下也能開 —— 不需要動路由器，也不會把服務暴露在公網上。
 
 安裝與疑難排解見 [`pi_monitor/README.md`](pi_monitor/README.md)。
 
