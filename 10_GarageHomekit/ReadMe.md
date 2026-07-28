@@ -73,6 +73,10 @@ UDP 送出即忘,樹莓派關機也不會拖慢韌體;TCP 在對方無回應時�
 儀表板預設只在區域網路內看得到。要從外面連，`pi_monitor/setup_tailscale.sh` 會把
 Tailscale 裝起來，手機在行動網路下也能開 —— 不需要動路由器，也不會把服務暴露在公網上。
 
+⚠️ 儀表板**沒有身分驗證**,是照「只在自己的網路內使用」設計的。
+不要用 `tailscale funnel` 或連接埠轉發把它開到公網,除非先加上密碼。
+安全性要點見 [`pi_monitor/README.md`](pi_monitor/README.md#安全性要點)。
+
 安裝與疑難排解見 [`pi_monitor/README.md`](pi_monitor/README.md)。
 
 ## 序列埠記錄工具(log_serial.py)

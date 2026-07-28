@@ -153,6 +153,40 @@ sudo tailscale serve --bg 8080
 會在 tailnet 內給一個 `https://jimmy-devices.<你的tailnet>.ts.net` 的網址，憑證自動處理，
 免去瀏覽器的「不安全」警告。關掉用 `sudo tailscale serve --https=443 off`。
 
+### ⚠️ serve 與 funnel 只差一個字，後果天差地遠
+
+| 指令 | 誰看得到 |
+|---|---|
+| `tailscale serve` | 只有你的 tailnet 成員 |
+| `tailscale funnel` | **整個公開網際網路** |
+
+因為 `server.py` **沒有任何身分驗證**，一旦開了 Funnel，車庫門的即時狀態、WiFi 資訊
+與完整 log 就等於公開廣播，而且會被搜尋引擎掃到。要走公開路線，請先加上密碼驗證。
+
+### 安全性要點
+
+Tailscale 的架構本身相當穩固：流量走 WireGuard 點對點加密，私鑰不離開裝置，
+協調伺服器只交換公鑰、看不到流量內容（走 DERP 中繼時搬的也是已加密封包）。
+實務上的風險幾乎都出在設定與周邊，依重要性排序：
+
+1. **登入用的身分提供者帳號就是整個 tailnet 的鑰匙。**
+   Google / Apple / GitHub 帳號被盜 = 對方能加裝置進你家內網。**務必開啟兩步驟驗證**，
+   這一步的投報率遠高於其他所有設定。
+2. **預設 ACL 是全通的** —— 所有裝置可互連所有連接埠，不只 8080。
+   裝置變多、或開始分享給家人時，就該寫 ACL 限制範圍。
+3. **不要關閉金鑰到期**（後台的 Disable key expiry）。關掉等於發出永不失效的鑰匙，
+   裝置遺失或轉手時風險才浮現。
+4. **Auth key 不要進版控**。可重複使用的 pre-auth key 外洩，任何人都能把機器加進 tailnet。
+   要用就用 ephemeral + 一次性的。
+5. **保持更新**：`sudo apt update && sudo apt upgrade tailscale`。
+6. **非必要不要開 exit node / subnet router**，那會把整個 192.168.0.x 網段暴露進 tailnet，
+   放大任一台裝置被入侵後的影響範圍。
+
+想把信任從協調伺服器收回自己手上，可以啟用 **Tailnet Lock**（新裝置須經既有裝置簽署才能加入）。
+家用規模通常不需要，但那是最根本的一道防線。
+
+> 具體的 CVE 與最新修補建議見 <https://tailscale.com/security>。
+
 ### 移除
 
 ```bash
