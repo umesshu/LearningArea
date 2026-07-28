@@ -117,11 +117,23 @@ sudo ./setup_tailscale.sh
 完成後在任何已登入的裝置上開：
 
 ```
-http://100.x.x.x:8080/        ← tailscale ip -4 印出的位址
-http://garage-pi:8080/        ← 需在 Tailscale 後台開啟 MagicDNS
+http://100.x.x.x:8080/         ← tailscale ip -4 印出的位址
+http://jimmy-devices:8080/     ← 需在 Tailscale 後台開啟 MagicDNS
 ```
 
 `server.py` 不必做任何修改：它綁在 `0.0.0.0`，本來就會一併服務 `tailscale0` 這個介面。
+
+### 裝置名稱與 tailnet 名稱是兩件事
+
+| | 是什麼 | 在哪裡改 |
+|---|---|---|
+| **裝置名稱** | 單一台機器的名字，如 `jimmy-devices` | 腳本的 `HOSTNAME_TS`，或 `sudo tailscale up --hostname=新名字` |
+| **tailnet 名稱** | 整個私有網路的網域，如 `tailb25589.ts.net` | Tailscale 後台 → Settings → Tailnet name |
+
+完整網域是兩者相接：`裝置名稱.tailnet名稱.ts.net`。
+要讓所有裝置共用一個好記的網域，改的是 **tailnet 名稱**，不是裝置名稱。
+
+改完裝置名稱後 MagicDNS 要幾秒才會生效，舊名字會立刻失效。
 
 ### 常用指令
 
@@ -138,7 +150,7 @@ sudo tailscale up             # 重新上線
 sudo tailscale serve --bg 8080
 ```
 
-會在 tailnet 內給一個 `https://garage-pi.<你的tailnet>.ts.net` 的網址，憑證自動處理，
+會在 tailnet 內給一個 `https://jimmy-devices.<你的tailnet>.ts.net` 的網址，憑證自動處理，
 免去瀏覽器的「不安全」警告。關掉用 `sudo tailscale serve --https=443 off`。
 
 ### 移除

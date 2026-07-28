@@ -12,7 +12,7 @@
 #
 set -euo pipefail
 
-HOSTNAME_TS="garage-pi"        # 登入後這台機器在 tailnet 裡的名字(MagicDNS 會用到)
+HOSTNAME_TS="jimmy-devices"        # 登入後這台機器在 tailnet 裡的名字(MagicDNS 會用到)
 KEYRING=/usr/share/keyrings/tailscale-archive-keyring.gpg
 SRC_LIST=/etc/apt/sources.list.d/tailscale.list
 
