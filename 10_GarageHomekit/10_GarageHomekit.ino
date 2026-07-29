@@ -29,6 +29,24 @@ IPAddress dns1     (192, 168, 0, 1);    // DNS(用路由器即可)
 #define PULSE_MS        400      // 「上」「下」模擬按一下的脈衝長度
 #define PULSE_MS_PAUSE  1200     // 「暫停」模擬按一下的脈衝長度
 
+// ---- 輸出模組極性 ----
+// 1 = 低電位觸發(8 路繼電器模組:IN 拉低 → 繼電器吸合)
+// 0 = 高電位觸發(舊的光耦板)
+// 接線:IN1/IN2/IN3 → D5/D6/D7,GND → GND,VCC → 3V3,
+//       拔掉 VCC–JD-VCC 的 jumper,JD-VCC 另接 5V(線圈電源)。
+//       VCC 吃 3V3 是為了讓 ESP 輸出的 3.3V 高電位能完全關斷光耦,避免繼電器放不乾淨。
+// ⚠️ 低電位觸發時,建議每支 IN 腳對 3V3 加 10kΩ 上拉電阻:
+//    ESP8266 開機前幾十毫秒腳位仍是浮接輸入,沒有上拉可能誤觸發一次脈衝。
+#define RELAY_ACTIVE_LOW  1
+
+#if RELAY_ACTIVE_LOW
+  #define RELAY_ON   LOW     // 相當於「按下按鈕」
+  #define RELAY_OFF  HIGH    // 相當於「放開按鈕」
+#else
+  #define RELAY_ON   HIGH
+  #define RELAY_OFF  LOW
+#endif
+
 // ==================== 遠端監控(UDP → 樹莓派)====================
 // 所有除錯訊息除了走序列埠,也會以 UDP 廣播送到同網段的樹莓派收集器。
 // 用「廣播」而非固定 IP:樹莓派換 IP 也不必重燒韌體。
@@ -200,7 +218,7 @@ PulseSwitch pulseSwitches[3] = {
 void trigger_switch(uint8_t idx, const homekit_value_t value) {
   PulseSwitch &sw = pulseSwitches[idx];
   if (value.bool_value && !sw.active) {
-    digitalWrite(sw.pin, HIGH);
+    digitalWrite(sw.pin, RELAY_ON);
     sw.active = true;
     sw.start = millis();
     netlogf("[指令] %s\n", sw.label);
@@ -211,7 +229,7 @@ void update_pulse_switches() {
   for (uint8_t i = 0; i < 3; i++) {
     PulseSwitch &sw = pulseSwitches[i];
     if (sw.active && millis() - sw.start >= sw.pulse_ms) {
-      digitalWrite(sw.pin, LOW);
+      digitalWrite(sw.pin, RELAY_OFF);
       sw.active = false;
       sw.cha->value = HOMEKIT_BOOL_CPP(false);
       homekit_characteristic_notify(sw.cha, sw.cha->value);
@@ -293,9 +311,11 @@ void setup() {
   delay(300);
   Serial.println("\n[車庫門控制器 · 三開關版]");
 
-  pinMode(PIN_OPEN, OUTPUT);   digitalWrite(PIN_OPEN, LOW);
-  pinMode(PIN_CLOSE, OUTPUT);  digitalWrite(PIN_CLOSE, LOW);
-  pinMode(PIN_PAUSE, OUTPUT);  digitalWrite(PIN_PAUSE, LOW);
+  // 先寫入「放開」電位再切成輸出,避免 pinMode 當下輸出一個反向的短脈衝
+  // (低電位觸發時那一瞬間就等於按了一下按鈕,車庫門會自己動)。
+  digitalWrite(PIN_OPEN,  RELAY_OFF);  pinMode(PIN_OPEN,  OUTPUT);  digitalWrite(PIN_OPEN,  RELAY_OFF);
+  digitalWrite(PIN_CLOSE, RELAY_OFF);  pinMode(PIN_CLOSE, OUTPUT);  digitalWrite(PIN_CLOSE, RELAY_OFF);
+  digitalWrite(PIN_PAUSE, RELAY_OFF);  pinMode(PIN_PAUSE, OUTPUT);  digitalWrite(PIN_PAUSE, RELAY_OFF);
 
   cha_open_on.setter = open_setter;
   cha_close_on.setter = close_setter;
