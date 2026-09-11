@@ -1,2 +1,10 @@
 # WiFi 帳密等機密設定,只留 secrets.h.example 範本在版控裡
 secrets.h
+
+# Python 虛擬環境與快取,不進版控(各自 pip install 重建即可)
+venv/
+__pycache__/
+*.pyc
+
+# 執行期產生的 log
+server.log

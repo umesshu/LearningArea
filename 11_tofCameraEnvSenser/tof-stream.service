@@ -1,0 +1,20 @@
+[Unit]
+Description=ToF Camera 深度影像與 3D 網格串流伺服器
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=umesshu
+Group=umesshu
+WorkingDirectory=/home/umesshu/gemini_workspace/LearningArea/11_tofCameraEnvSenser
+ExecStart=/home/umesshu/gemini_workspace/LearningArea/11_tofCameraEnvSenser/venv/bin/python3 /home/umesshu/gemini_workspace/LearningArea/11_tofCameraEnvSenser/tof_stream_server.py
+# 讓 print() 立刻進 journal，不要卡在緩衝區
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
