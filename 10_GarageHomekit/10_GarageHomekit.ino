@@ -2,13 +2,26 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <arduino_homekit_server.h>
-#include <Wire.h>
-#include <VL53L1X.h>
 
 // ==================== 使用者設定 ====================
 // WiFi 帳密放在同目錄的 secrets.h(已被 .gitignore 排除,不會進版控)。
 // 第一次使用:複製 secrets.h.example 成 secrets.h,填入自己的 SSID / 密碼。
 #include "secrets.h"
+
+// ==================== Blynk(純監控用,不是控制的一部分)====================
+// 跟 12_GarageBlynk 共用同一個 Template(Datastream V0 已經定義好,直接沿用),
+// 但這是獨立的 Device、獨立的 Token。這裡刻意不呼叫 Blynk.begin()(那會搶走
+// WiFi 連線流程),只用 Blynk.config() + loop() 裡的 Blynk.run(),完全不影響
+// 既有的 WiFi/HomeKit 連線邏輯。Blynk 連不上最多就是監控看不到資料,
+// **絕對不能因為 Blynk 而重開機或延誤 HomeKit**,所以這裡沒有比照 ESP32 版本
+// 做斷線重開機的 watchdog。
+#include <BlynkSimpleEsp8266.h>
+unsigned long blynkOpCounter = 0;   // 每次開/關/暫停動作遞增
+
+void reportOpToBlynk(const char *action) {
+  blynkOpCounter++;
+  Blynk.virtualWrite(V0, String(action) + ":" + String(blynkOpCounter));
+}
 
 const char *ssid     = WIFI_SSID;       // 與 iPhone/HomePod 同網段(192.168.0.x)
 const char *password = WIFI_PASSWORD;
@@ -60,24 +73,8 @@ IPAddress udpLogTarget;
 bool udpLogReady = false;
 unsigned long lastTelemetry = 0;
 
-// ==================== VL53L1X 車庫門位置感測 ====================
-// 接線:VL53L1X → 3V3 / GND / SDA / SCL
-// ⚠️ 本板為 WeMos D1 R1(FQBN d1),D1=GPIO1(TX)、D2=GPIO16,不可當 I2C!
-//    使用板子內建 SDA=GPIO4、SCL=GPIO5 常數,接到板上標示 SDA/SCL 的腳。
-#define PIN_SDA    SDA    // GPIO4
-#define PIN_SCL    SCL    // GPIO5
-
-// ---- 距離→百分比校正(務必實測後填入)----
-// 分別量測「門全關」與「門全開」時感測器讀到的距離(mm),填入下面兩格。
-// 兩種安裝方向都支援:DIST_OPEN_MM 比 DIST_CLOSED_MM 大或小都可以。
-// 校正做法:先把 VL53_CALIBRATION 設為 1 燒錄,序列埠會持續印出目前距離,
-//          手動開/關門讀出兩端數值,填回下面,再把 VL53_CALIBRATION 改回 0。
-#define VL53_CALIBRATION  1        // 1=校正模式(只印距離,不更新HomeKit位置)
-#define DIST_CLOSED_MM    400      // ← 門「全關」時的距離(mm),實測填入
-#define DIST_OPEN_MM      2000     // ← 門「全開」時的距離(mm),實測填入
-
-#define VL53_READ_INTERVAL_MS  500UL   // 讀取/更新位置的間隔
-#define POS_CHANGE_THRESHOLD   2       // 位置變化超過幾 % 才更新(去抖動)
+// VL53L1X 距離感測(車庫門位置偵測)已移除:實測這顆感測器裝在這個位置量出來的
+// 距離不穩定、不合用。現在只保留開/關/暫停三個獨立開關,不追蹤門的精確位置。
 
 // ==================== 一次性配對重置 ====================
 // 若在 iOS 家庭 App 找不到配件(裝置殘留舊配對),把下面設為 1 燒錄開機一次,
@@ -90,14 +87,6 @@ extern "C" homekit_server_config_t config;
 extern "C" homekit_characteristic_t cha_open_on;
 extern "C" homekit_characteristic_t cha_close_on;
 extern "C" homekit_characteristic_t cha_pause_on;
-extern "C" homekit_characteristic_t cha_cover_current;   // 目前位置 0~100%
-extern "C" homekit_characteristic_t cha_cover_target;    // 目標位置 0~100%
-extern "C" homekit_characteristic_t cha_cover_state;     // 0=關閉中 1=開啟中 2=停止
-
-VL53L1X tofSensor;
-bool tofReady = false;
-unsigned long lastTofRead = 0;
-uint16_t lastDistanceMm = 0;   // 最近一次 VL53L1X 量測到的距離(mm)
 
 #define WIFI_RSSI_INTERVAL_MS  5000UL   // WiFi訊號強度顯示間隔
 unsigned long lastRssiPrint = 0;
@@ -145,55 +134,24 @@ void netlogf(const char *fmt, ...) {
   udpSend(buf, n);
 }
 
-// ---- 距離(mm)換算成開啟百分比 0~100(自動支援兩種安裝方向)----
-uint8_t distance_to_position(uint16_t mm) {
-  long lo = DIST_CLOSED_MM, hi = DIST_OPEN_MM;
-  long pos = (long)(mm - lo) * 100 / (hi - lo);   // 線性內插(hi<lo 時比例自動反向)
-  if (pos < 0)   pos = 0;
-  if (pos > 100) pos = 100;
-  return (uint8_t)pos;
-}
-
 // 定期送一包 JSON 遙測給樹莓派儀表板(以 '{' 開頭,收集器藉此和文字 log 區分)
 void sendTelemetry() {
 #if UDP_LOG_ENABLE
   if (!udpLogReady || WiFi.status() != WL_CONNECTED) return;
-  char buf[256];
-  // 校正模式下 HomeKit 位置不會更新,這裡仍即時換算一份給網頁看
-  uint8_t pos = tofReady ? distance_to_position(lastDistanceMm) : 0;
+  char buf[128];
   int n = snprintf(buf, sizeof(buf),
-      "{\"t\":\"tel\",\"dist\":%u,\"pos\":%u,\"hkpos\":%d,\"target\":%d,"
-      "\"state\":%d,\"rssi\":%d,\"heap\":%u,\"up\":%lu,\"tof\":%d,\"cal\":%d}",
-      lastDistanceMm, pos,
-      cha_cover_current.value.int_value, cha_cover_target.value.int_value,
-      cha_cover_state.value.int_value, WiFi.RSSI(),
-      (unsigned)ESP.getFreeHeap(), millis() / 1000UL,
-      tofReady ? 1 : 0, VL53_CALIBRATION);
+      "{\"t\":\"tel\",\"rssi\":%d,\"heap\":%u,\"up\":%lu}",
+      WiFi.RSSI(), (unsigned)ESP.getFreeHeap(), millis() / 1000UL);
   if (n > 0) udpSend(buf, (size_t)min(n, (int)sizeof(buf) - 1));
 #endif
 }
 
 // 顯示WiFi訊號強度(連線中/已連線皆可呼叫)
 void printWifiRssi() {
-  // 即時讀一次距離(連線迴圈在 setup 內、loop 尚未跑,不能只靠 lastDistanceMm)
-  if (tofReady) {
-    uint16_t mm = tofSensor.read(false);
-    if (!tofSensor.timeoutOccurred()) lastDistanceMm = mm;
-  }
   if (WiFi.status() == WL_CONNECTED) {
-    if (tofReady) {
-      netlogf("[WiFi] 已連線,訊號強度 RSSI=%d dBm,距離=%u mm\n",
-              WiFi.RSSI(), lastDistanceMm);
-    } else {
-      netlogf("[WiFi] 已連線,訊號強度 RSSI=%d dBm,距離=N/A(感測器未就緒)\n",
-              WiFi.RSSI());
-    }
+    netlogf("[WiFi] 已連線,訊號強度 RSSI=%d dBm\n", WiFi.RSSI());
   } else {
-    if (tofReady) {
-      netlogf("[WiFi] 連線中,尚無訊號強度資料,距離=%u mm\n", lastDistanceMm);
-    } else {
-      netlogf("[WiFi] 連線中,尚無訊號強度資料,距離=N/A(感測器未就緒)\n");
-    }
+    netlogf("[WiFi] 連線中,尚無訊號強度資料\n");
   }
 }
 
@@ -208,6 +166,9 @@ struct PulseSwitch {
   bool active;
   unsigned long start;
 };
+
+// action:給 Blynk 回報用的英文代號,樹莓派端解析用,跟 label(中文,給序列埠/UDP log 用)分開
+const char *pulseActions[3] = { "open", "close", "pause" };
 
 PulseSwitch pulseSwitches[3] = {
   { &cha_open_on,  PIN_OPEN,  "開門", PULSE_MS,       false, 0 },
@@ -233,6 +194,7 @@ void update_pulse_switches() {
       sw.active = false;
       sw.cha->value = HOMEKIT_BOOL_CPP(false);
       homekit_characteristic_notify(sw.cha, sw.cha->value);
+      reportOpToBlynk(pulseActions[i]);   // 純回報監控用,失敗也不影響上面已經做完的動作
     }
   }
 }
@@ -241,69 +203,6 @@ void update_pulse_switches() {
 void open_setter(const homekit_value_t value)  { trigger_switch(0, value); }
 void close_setter(const homekit_value_t value) { trigger_switch(1, value); }
 void pause_setter(const homekit_value_t value) { trigger_switch(2, value); }
-
-// ---- 窗簾:使用者拖動滑桿設定目標位置 → 觸發開/關脈衝 ----
-// 車庫門無法精準停在中間,策略:目標比目前高 → 開門;比目前低 → 關門。
-void cover_target_setter(const homekit_value_t value) {
-  int target = value.int_value;
-  int current = cha_cover_current.value.int_value;
-  cha_cover_target.value = value;   // 記住目標
-  if (target > current + POS_CHANGE_THRESHOLD) {
-    netlogf("[窗簾] 目標 %d%% > 目前 %d%% → 開門\n", target, current);
-    trigger_switch(0, HOMEKIT_BOOL_CPP(true));
-    cha_cover_state.value = HOMEKIT_UINT8_CPP(1);   // 開啟中
-    homekit_characteristic_notify(&cha_cover_state, cha_cover_state.value);
-  } else if (target < current - POS_CHANGE_THRESHOLD) {
-    netlogf("[窗簾] 目標 %d%% < 目前 %d%% → 關門\n", target, current);
-    trigger_switch(1, HOMEKIT_BOOL_CPP(true));
-    cha_cover_state.value = HOMEKIT_UINT8_CPP(0);   // 關閉中
-    homekit_characteristic_notify(&cha_cover_state, cha_cover_state.value);
-  }
-}
-
-// ---- 讀取感測器並更新 HomeKit 位置 / 狀態 ----
-void update_door_position() {
-  if (!tofReady) return;
-  if (millis() - lastTofRead < VL53_READ_INTERVAL_MS) return;
-  lastTofRead = millis();
-
-  uint16_t mm = tofSensor.read(false);   // 非阻塞讀取最新一次連續量測值
-  if (tofSensor.timeoutOccurred()) {
-    netlogf("[VL53] 讀取逾時\n");
-    return;
-  }
-  lastDistanceMm = mm;   // 供 printWifiRssi() 一併顯示
-
-#if VL53_CALIBRATION
-  // 校正模式:只印距離,方便讀出門全關 / 全開兩端的 mm 值
-  netlogf("[VL53 校正] 距離 = %u mm\n", mm);
-  return;
-#else
-  uint8_t pos = distance_to_position(mm);
-  int prev = cha_cover_current.value.int_value;
-
-  if (abs((int)pos - prev) >= POS_CHANGE_THRESHOLD) {
-    cha_cover_current.value = HOMEKIT_UINT8_CPP(pos);
-    homekit_characteristic_notify(&cha_cover_current, cha_cover_current.value);
-    netlogf("[VL53] 距離 %u mm → 位置 %u%%\n", mm, pos);
-
-    // 依位置變化方向更新狀態(開啟中/關閉中);變化很小視為停止
-    uint8_t state = (pos > prev + 1) ? 1 : (pos < prev - 1) ? 0 : 2;
-    if (state != cha_cover_state.value.int_value) {
-      cha_cover_state.value = HOMEKIT_UINT8_CPP(state);
-      homekit_characteristic_notify(&cha_cover_state, cha_cover_state.value);
-    }
-  } else {
-    // 位置穩定 → 標記為停止,並讓目標追上目前值(避免滑桿殘留)
-    if (cha_cover_state.value.int_value != 2) {
-      cha_cover_state.value = HOMEKIT_UINT8_CPP(2);
-      homekit_characteristic_notify(&cha_cover_state, cha_cover_state.value);
-      cha_cover_target.value = HOMEKIT_UINT8_CPP(cha_cover_current.value.int_value);
-      homekit_characteristic_notify(&cha_cover_target, cha_cover_target.value);
-    }
-  }
-#endif
-}
 
 // ==================== setup ====================
 void setup() {
@@ -320,24 +219,6 @@ void setup() {
   cha_open_on.setter = open_setter;
   cha_close_on.setter = close_setter;
   cha_pause_on.setter = pause_setter;
-  cha_cover_target.setter = cover_target_setter;
-
-  // ---- 初始化 VL53L1X(I2C)----
-  Wire.begin(PIN_SDA, PIN_SCL);
-  Wire.setClock(400000);
-  tofSensor.setTimeout(500);
-  if (tofSensor.init()) {
-    tofSensor.setDistanceMode(VL53L1X::Long);       // 長距模式(最遠約 4m)
-    tofSensor.setMeasurementTimingBudget(50000);    // 50ms/次
-    tofSensor.startContinuous(50);                  // 每 50ms 連續量測
-    tofReady = true;
-    Serial.println("[VL53] 初始化成功,開始量測車庫門位置");
-#if VL53_CALIBRATION
-    Serial.println("[VL53] *** 校正模式:請手動全開/全關門,記下兩端 mm 值 ***");
-#endif
-  } else {
-    Serial.println("[VL53] 初始化失敗!請檢查接線(SDA=GPIO4, SCL=GPIO5, 3V3, GND)");
-  }
 
 #if RESET_HOMEKIT_PAIRING
   // 清除配對移到 WiFi 連線「之前」,確保即使 WiFi 連不上也能清乾淨、恢復可發現
@@ -399,7 +280,10 @@ void setup() {
   lastWifiOkMs = millis();   // 記錄已連線的時間點,供 loop() 判斷掉線
 
   udpLogBegin();             // WiFi 就緒後才算得出廣播位址
-  netlogf("[系統] 開機完成,韌體 = 車庫門控制器 · 測距版\n");
+  netlogf("[系統] 開機完成,韌體 = 車庫門控制器 · 三開關版(無測距)\n");
+
+  Blynk.config(BLYNK_AUTH_TOKEN);   // 不呼叫 Blynk.begin(),不搶 WiFi 連線流程;
+                                     // 之後交給 loop() 的 Blynk.run() 背景連線
 
   arduino_homekit_setup(&config);
   netlogf("[HomeKit] 就緒,配對碼 111-11-111\n");
@@ -409,7 +293,7 @@ void setup() {
 void loop() {
   arduino_homekit_loop();
   update_pulse_switches();
-  update_door_position();
+  Blynk.run();   // 純監控用的背景連線;WiFi 沒連上時 Blynk.run() 內部會自己跳過
 
   // 每隔約5秒顯示一次WiFi訊號強度
   if (millis() - lastRssiPrint >= WIFI_RSSI_INTERVAL_MS) {

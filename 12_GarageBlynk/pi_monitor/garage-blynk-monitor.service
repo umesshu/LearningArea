@@ -1,0 +1,19 @@
+[Unit]
+Description=車庫門 Blynk 監控收集器(UDP 5515 → 網頁 8081)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=umesshu
+Group=umesshu
+WorkingDirectory=/home/umesshu/gemini_workspace/LearningArea/12_GarageBlynk/pi_monitor
+ExecStart=/usr/bin/python3 /home/umesshu/gemini_workspace/LearningArea/12_GarageBlynk/pi_monitor/server.py --port 8081 --udp-port 5515
+# 讓 print() 立刻進 journal,不要卡在緩衝區
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+[Install]
+WantedBy=multi-user.target

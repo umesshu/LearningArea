@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>車庫門 Blynk 監控</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --border: #e3e5e8;
+    --ok: #1a9d55;
+    --bad: #d33d3d;
+    --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --card: #202329;
+      --text: #edeef0;
+      --muted: #9aa1ab;
+      --border: #34383f;
+      --ok: #35d07f;
+      --bad: #ff6b6b;
+      --accent: #5b8def;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+    padding-bottom: 40px;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 16px; }
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--bad);
+    flex-shrink: 0;
+  }
+  .dot.online { background: var(--ok); }
+  .status-text { font-weight: 600; }
+  .status-meta { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  @media (min-width: 720px) {
+    .grid { grid-template-columns: 1fr 1fr; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    overflow-x: auto;
+  }
+  .card h2 {
+    font-size: 1rem;
+    margin: 0 0 12px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  th { color: var(--muted); font-weight: 500; }
+  .empty { color: var(--muted); font-size: 0.85rem; padding: 8px 0; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge.open { background: rgba(37,99,235,0.15); color: var(--accent); }
+  .badge.close { background: rgba(107,114,128,0.2); color: var(--muted); }
+</style>
+</head>
+<body>
+  <h1>車庫門遙控器監控（ESP32 + Blynk）</h1>
+
+  <div class="status-bar">
+    <div class="dot" id="statusDot"></div>
+    <div class="status-text" id="statusText">載入中…</div>
+    <div class="status-meta" id="statusMeta"></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>連線階段記錄（最近 50 筆）</h2>
+      <div id="sessionsEmpty" class="empty" hidden>目前還沒有已結束的連線階段。</div>
+      <table id="sessionsTable" hidden>
+        <thead><tr><th>開始</th><th>結束</th><th>持續時間</th></tr></thead>
+        <tbody id="sessionsBody"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>開/關操作記錄（最近 50 筆）</h2>
+      <p class="empty" style="margin-top:-6px">觸發是手機捷徑直接呼叫 Blynk Cloud，不經過這台樹莓派，所以記不到來源裝置/IP，只記錄時間與動作。</p>
+      <div id="opsEmpty" class="empty" hidden>目前還沒有操作紀錄。</div>
+      <table id="opsTable" hidden>
+        <thead><tr><th>時間</th><th>動作</th></tr></thead>
+        <tbody id="opsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const statusMeta = document.getElementById('statusMeta');
+const sessionsBody = document.getElementById('sessionsBody');
+const sessionsTable = document.getElementById('sessionsTable');
+const sessionsEmpty = document.getElementById('sessionsEmpty');
+const opsBody = document.getElementById('opsBody');
+const opsTable = document.getElementById('opsTable');
+const opsEmpty = document.getElementById('opsEmpty');
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString('zh-TW', { hour12: false });
+}
+
+function fmtDuration(sec) {
+  sec = Math.round(sec);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}時${m}分`;
+  if (m > 0) return `${m}分${s}秒`;
+  return `${s}秒`;
+}
+
+function renderStatus(online, lastSeen, latestHb) {
+  statusDot.classList.toggle('online', online);
+  statusText.textContent = online ? '線上' : '離線';
+  if (lastSeen) {
+    const ago = Math.max(0, Math.round(Date.now()/1000 - lastSeen));
+    let meta = `最近一次心跳：${fmtTime(lastSeen)}（${ago} 秒前）`;
+    if (latestHb) {
+      if (latestHb.ip) meta += ` · IP ${latestHb.ip}`;
+      if (typeof latestHb.rssi === 'number') meta += ` · RSSI ${latestHb.rssi}dBm`;
+    }
+    statusMeta.textContent = meta;
+  } else {
+    statusMeta.textContent = '尚未收到任何回報';
+  }
+}
+
+function renderSessions(sessions) {
+  if (!sessions || sessions.length === 0) {
+    sessionsTable.hidden = true;
+    sessionsEmpty.hidden = false;
+    return;
+  }
+  sessionsTable.hidden = false;
+  sessionsEmpty.hidden = true;
+  sessionsBody.innerHTML = sessions.slice().reverse().map(s => `
+    <tr>
+      <td>${fmtTime(s.start)}</td>
+      <td>${fmtTime(s.end)}</td>
+      <td>${fmtDuration(s.duration)}</td>
+    </tr>
+  `).join('');
+}
+
+function renderOps(ops) {
+  if (!ops || ops.length === 0) {
+    opsTable.hidden = true;
+    opsEmpty.hidden = false;
+    return;
+  }
+  opsTable.hidden = false;
+  opsEmpty.hidden = true;
+  opsBody.innerHTML = ops.slice().reverse().map(o => `
+    <tr>
+      <td>${fmtTime(o.ts)}</td>
+      <td><span class="badge ${o.action === 'open' ? 'open' : 'close'}">${o.action === 'open' ? '開門' : (o.action === 'close' ? '關門' : o.action)}</span></td>
+    </tr>
+  `).join('');
+}
+
+let state = { sessions: [], ops: [], online: false, last_seen: 0, latest_hb: null };
+
+function applySnapshot(snap) {
+  state.online = snap.online;
+  state.last_seen = snap.last_seen;
+  state.latest_hb = snap.latest_hb;
+  state.sessions = snap.sessions || [];
+  state.ops = snap.ops || [];
+  renderStatus(state.online, state.last_seen, state.latest_hb);
+  renderSessions(state.sessions);
+  renderOps(state.ops);
+}
+
+function connect() {
+  const es = new EventSource('/events');
+  es.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    if (msg.type === 'snapshot') {
+      applySnapshot(msg);
+    } else if (msg.type === 'hb') {
+      state.online = true;
+      state.last_seen = msg.data.ts || (Date.now()/1000);
+      state.latest_hb = msg.data;
+      renderStatus(state.online, state.last_seen, state.latest_hb);
+    } else if (msg.type === 'op') {
+      state.ops.push(msg.data);
+      if (state.ops.length > 50) state.ops.shift();
+      renderOps(state.ops);
+    } else if (msg.type === 'offline') {
+      state.online = false;
+      renderStatus(false, state.last_seen, state.latest_hb);
+      // 重新拉一次快照,把剛結束的那段連線補進表格
+      fetch('/api/state').then(r => r.json()).then(applySnapshot).catch(() => {});
+    }
+  };
+  es.onerror = () => {
+    es.close();
+    setTimeout(connect, 2000);
+  };
+}
+
+// 每秒把「幾秒前」的文字刷新一次,不用等下個封包
+setInterval(() => renderStatus(state.online, state.last_seen, state.latest_hb), 1000);
+
+connect();
+</script>
+</body>
+</html>

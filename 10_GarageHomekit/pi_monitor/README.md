@@ -1,5 +1,12 @@
 # 車庫門遙測監控(樹莓派端)
 
+> ⚠️ **已被取代**：這份監控已經整合進 [`../../13_pi_monitor/`](../../13_pi_monitor/README.md)，
+> 跟 `12_GarageBlynk` 的裝置合併成同一個 process、同一個網頁埠(8080)一起顯示。
+> 這裡的檔案還留著是因為目前系統服務（systemd）還指著這裡跑，尚未手動切換過去；
+> 要切換時，把 `garage-monitor.service` 換成 `../../13_pi_monitor/garage-monitor.service`
+> 那份（同名，直接覆蓋 `/etc/systemd/system/garage-monitor.service` 再
+> `daemon-reload && restart` 即可）。切換完成後這份資料夾就可以整個刪除。
+
 Wemos 把除錯訊息與遙測用 **UDP 廣播**送出，樹莓派收下來，並提供一個網頁儀表板，
 手機或電腦連進去就能即時看到車庫門狀態。
 
