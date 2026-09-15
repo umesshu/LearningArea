@@ -49,8 +49,13 @@ cp secrets.py.example secrets.py   # 然後編輯填入兩個 Token
 python3 server.py
 ```
 
-看到 `[HTTP] 儀表板 ...` 就代表起來了，然後用瀏覽器打開
-<http://192.168.50.68:8080/>，兩個裝置的區塊會顯示在同一個頁面上。
+看到 `[HTTP] 儀表板 ...` 就代表起來了，然後用瀏覽器打開：
+
+- 同區網內：<http://192.168.0.113:8080/>
+- 外網（Tailscale）：<http://100.66.110.70:8080/>
+
+兩個裝置的區塊會顯示在同一個頁面上。**區網 IP 曾經變動過**（換路由器/網路架構調整），
+若連不上請重新在樹莓派上跑 `hostname -I` 確認目前的區網 IP；Tailscale IP 目前穩定沒變過。
 
 ## 設成開機自動啟動
 
@@ -98,5 +103,5 @@ python3 server.py --port 8080 --blynk-poll-interval 10 --bind 0.0.0.0
 ## 存取範圍
 
 `server.py` 沒有任何身分驗證，是照「只在區網/Tailscale 內使用」設計的。
-`192.168.50.68` 只有連著家裡網路的裝置看得到；要從外面連，用 `setup_tailscale.sh`
-裝好 Tailscale 之後，透過私有位址/MagicDNS 存取即可，不要對外開放連接埠轉發。
+`192.168.0.113` 只有連著家裡網路的裝置看得到；要從外面連，用 `setup_tailscale.sh`
+裝好 Tailscale 之後，透過 `100.66.110.70`（或 MagicDNS）存取即可，不要對外開放連接埠轉發。
