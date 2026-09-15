@@ -1,0 +1,19 @@
+[Unit]
+Description=車庫門裝置共用監控(輪詢 Blynk Cloud → 網頁 8080)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=umesshu
+Group=umesshu
+WorkingDirectory=/home/umesshu/gemini_workspace/LearningArea/13_pi_monitor
+ExecStart=/usr/bin/python3 /home/umesshu/gemini_workspace/LearningArea/13_pi_monitor/server.py --port 8080
+# 讓 print() 立刻進 journal,不要卡在緩衝區
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+[Install]
+WantedBy=multi-user.target

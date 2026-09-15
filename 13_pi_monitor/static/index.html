@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>車庫門監控 · GARAGE-01 / GARAGE-02</title>
+<style>
+/* ============================================================
+   設計語彙:工控 HMI 面板 —— 冷藍灰機殼 + 琥珀背光
+   ============================================================ */
+:root {
+  --ground:  #0E1317;
+  --panel:   #151C22;
+  --panel-2: #1B242B;
+  --line:    #26313A;
+  --line-soft: #1F2932;
+  --ink:     #DCE4EA;
+  --ink-2:   #94A3AE;
+  --ink-3:   #64737F;
+  --accent:  #F0A93B;
+  --accent-soft: rgba(240, 169, 59, .14);
+  --ok:      #4FAE7F;
+  --warn:    #E0B03C;
+  --crit:    #DE5F4C;
+  --shadow:  0 1px 2px rgba(0,0,0,.4);
+
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --font-sans: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --r: 4px;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --ground:  #E8ECEE;
+    --panel:   #FFFFFF;
+    --panel-2: #F3F6F8;
+    --line:    #D2DAE0;
+    --line-soft: #E3E9ED;
+    --ink:     #121A20;
+    --ink-2:   #4C5B65;
+    --ink-3:   #79878F;
+    --accent:  #A2650F;
+    --accent-soft: rgba(162, 101, 15, .10);
+    --ok:      #2C7A55;
+    --warn:    #8A6100;
+    --crit:    #A93826;
+    --shadow:  0 1px 2px rgba(20,30,40,.08);
+  }
+}
+:root[data-theme="dark"] {
+  --ground:#0E1317; --panel:#151C22; --panel-2:#1B242B; --line:#26313A; --line-soft:#1F2932;
+  --ink:#DCE4EA; --ink-2:#94A3AE; --ink-3:#64737F;
+  --accent:#F0A93B; --accent-soft:rgba(240,169,59,.14);
+  --ok:#4FAE7F; --warn:#E0B03C; --crit:#DE5F4C; --shadow:0 1px 2px rgba(0,0,0,.4);
+}
+:root[data-theme="light"] {
+  --ground:#E8ECEE; --panel:#FFFFFF; --panel-2:#F3F6F8; --line:#D2DAE0; --line-soft:#E3E9ED;
+  --ink:#121A20; --ink-2:#4C5B65; --ink-3:#79878F;
+  --accent:#A2650F; --accent-soft:rgba(162,101,15,.10);
+  --ok:#2C7A55; --warn:#8A6100; --crit:#A93826; --shadow:0 1px 2px rgba(20,30,40,.08);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  padding-bottom: 24px;
+}
+b, strong { font-weight: 600; }
+
+.bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px;
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky; top: 0; z-index: 20;
+}
+.bar h1 {
+  margin: 0; font-family: var(--font-mono); font-size: 15px; font-weight: 600;
+  letter-spacing: .09em;
+}
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.is-live { color: var(--ok); }
+.pill.is-live .dot { animation: blip 2s ease-in-out infinite; }
+.pill.is-down { color: var(--crit); }
+@keyframes blip { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .pill .dot { animation: none; } }
+
+.kv {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3);
+  letter-spacing: .05em; white-space: nowrap;
+}
+.kv b { color: var(--ink-2); font-variant-numeric: tabular-nums; margin-left: 5px; }
+
+/* ---------- 卡片格線:一張卡 = 一個裝置 ---------- */
+.cards {
+  display: grid; gap: 16px; padding: 16px 14px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 720px) {
+  .cards { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); padding: 18px; gap: 18px; }
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+  overflow: hidden;
+}
+.card-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.card-head .name-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.card-head h2 {
+  margin: 0; font-family: var(--font-mono); font-size: 14px; font-weight: 700;
+  letter-spacing: .06em;
+}
+.card-head .sub {
+  display: block; margin-top: 2px;
+  font-size: 11px; color: var(--ink-3); letter-spacing: .02em;
+}
+.card-head .kv { margin-top: 8px; }
+
+.card-section {
+  border-top: 1px solid var(--line-soft);
+}
+.card-section:first-of-type { border-top: none; }
+.card-section-head {
+  padding: 10px 16px 6px;
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 600;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+}
+
+.panel-head h2 {
+  margin: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: .13em; text-transform: uppercase; color: var(--ink-3);
+}
+
+table { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: 11.5px; }
+th, td { padding: 5px 16px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th {
+  color: var(--ink-3); font-weight: 600; letter-spacing: .08em;
+  border-bottom: 1px solid var(--line-soft); text-transform: uppercase; font-size: 10px;
+}
+tbody tr:nth-child(even) { background: var(--panel-2); }
+.table-scroll { overflow-x: auto; max-height: 220px; overflow-y: auto; }
+.table-empty { padding: 4px 16px 14px; color: var(--ink-3); font-family: var(--font-mono); font-size: 11.5px; }
+.hint { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3); padding: 0 16px 8px; }
+
+.badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: .04em;
+}
+.badge.open  { color: var(--ok); background: var(--accent-soft); }
+.badge.close { color: var(--ink-2); background: var(--panel-2); }
+.badge.pause { color: var(--warn); background: var(--panel-2); }
+
+footer {
+  padding: 12px 18px; color: var(--ink-3);
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em;
+}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <h1>車庫門監控</h1>
+</header>
+
+<div class="cards">
+  <!-- ===== GARAGE-01 ===== -->
+  <article class="card">
+    <div class="card-head">
+      <div class="name-row">
+        <h2>GARAGE-01</h2>
+        <span class="pill is-down" id="g01-conn"><span class="dot"></span><span id="g01-conn-text">等待資料</span></span>
+      </div>
+      <span class="sub">Wemos D1 R1 · Apple HomeKit(開/關/暫停) · 監控走 Blynk Cloud</span>
+      <div class="kv">最後確認連線<b id="g01-age">—</b></div>
+    </div>
+
+    <div class="card-section">
+      <div class="card-section-head">連線階段記錄(最近 50 筆)</div>
+      <div id="g01-sessions-empty" class="table-empty">目前還沒有已結束的連線階段。</div>
+      <div class="table-scroll" id="g01-sessions-wrap" hidden>
+        <table>
+          <thead><tr><th>開始</th><th>結束</th><th>持續時間</th></tr></thead>
+          <tbody id="g01-sessions-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card-section">
+      <div class="card-section-head">開/關/暫停操作記錄(最近 50 筆)</div>
+      <div class="hint">觸發走 HomeKit(不經過樹莓派),記不到來源裝置/IP,只記錄時間與動作。</div>
+      <div id="g01-ops-empty" class="table-empty">目前還沒有操作紀錄。</div>
+      <div class="table-scroll" id="g01-ops-wrap" hidden>
+        <table>
+          <thead><tr><th>時間</th><th>動作</th></tr></thead>
+          <tbody id="g01-ops-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </article>
+
+  <!-- ===== GARAGE-02 ===== -->
+  <article class="card">
+    <div class="card-head">
+      <div class="name-row">
+        <h2>GARAGE-02</h2>
+        <span class="pill is-down" id="g02-conn"><span class="dot"></span><span id="g02-conn-text">等待資料</span></span>
+      </div>
+      <span class="sub">ESP32_Relay_AC_X2 · Blynk IoT(開/關)</span>
+      <div class="kv">最後確認連線<b id="g02-age">—</b></div>
+    </div>
+
+    <div class="card-section">
+      <div class="card-section-head">連線階段記錄(最近 50 筆)</div>
+      <div id="g02-sessions-empty" class="table-empty">目前還沒有已結束的連線階段。</div>
+      <div class="table-scroll" id="g02-sessions-wrap" hidden>
+        <table>
+          <thead><tr><th>開始</th><th>結束</th><th>持續時間</th></tr></thead>
+          <tbody id="g02-sessions-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card-section">
+      <div class="card-section-head">開/關操作記錄(最近 50 筆)</div>
+      <div class="hint">觸發是手機捷徑直接呼叫 Blynk Cloud(不經過樹莓派),記不到來源裝置/IP,只記錄時間與動作。</div>
+      <div id="g02-ops-empty" class="table-empty">目前還沒有操作紀錄。</div>
+      <div class="table-scroll" id="g02-ops-wrap" hidden>
+        <table>
+          <thead><tr><th>時間</th><th>動作</th></tr></thead>
+          <tbody id="g02-ops-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </article>
+</div>
+
+<footer>兩台裝置皆輪詢 Blynk Cloud API,不依賴本地網路 → SSE /events</footer>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+function dateTimeOf(ts) {
+  if (!ts) return "—";
+  return new Date(ts * 1000).toLocaleString("zh-TW", { hour12: false });
+}
+function durationOf(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  if (h) return h + "時 " + String(m).padStart(2, "0") + "分";
+  if (m) return m + "分 " + String(s).padStart(2, "0") + "秒";
+  return s + " 秒";
+}
+function actionLabel(action) {
+  if (action === "open") return "開門";
+  if (action === "close") return "關門";
+  if (action === "pause") return "暫停";
+  return action;
+}
+function actionClass(action) {
+  if (action === "open") return "open";
+  if (action === "pause") return "pause";
+  return "close";
+}
+
+/* ============================================================
+   單一裝置的狀態 + 畫面更新,GARAGE-01/GARAGE-02 各建一份
+   ============================================================ */
+function makeDevice(prefix) {
+  let OFFLINE_AFTER = 30;
+  const state = { online: false, lastSeen: 0, sessions: [], ops: [] };
+
+  function applySnapshot(snap) {
+    if (snap.offline_after) OFFLINE_AFTER = snap.offline_after;
+    state.online = !!snap.online;
+    state.lastSeen = snap.last_seen || 0;
+    state.sessions = snap.sessions || [];
+    state.ops = snap.ops || [];
+    renderAll();
+  }
+
+  function renderStatus() {
+    const pill = $(prefix + "-conn"), text = $(prefix + "-conn-text");
+    pill.className = "pill";
+    if (state.online) { pill.classList.add("is-live"); text.textContent = "連線正常"; }
+    else if (!state.lastSeen) { pill.classList.add("is-down"); text.textContent = "等待資料"; }
+    else { pill.classList.add("is-down"); text.textContent = "離線"; }
+
+    const age = state.lastSeen ? Math.max(0, Math.floor(Date.now() / 1000 - state.lastSeen)) : null;
+    $(prefix + "-age").textContent = age === null ? "—" : (age < 2 ? "剛剛" : age + " 秒前");
+  }
+
+  function renderSessions() {
+    const wrap = $(prefix + "-sessions-wrap"), empty = $(prefix + "-sessions-empty");
+    if (!state.sessions.length) { wrap.hidden = true; empty.hidden = false; return; }
+    wrap.hidden = false; empty.hidden = true;
+    $(prefix + "-sessions-body").innerHTML = state.sessions.slice().reverse().map((s) =>
+      "<tr><td>" + dateTimeOf(s.start) + "</td><td>" + dateTimeOf(s.end) + "</td><td>" + durationOf(s.duration) + "</td></tr>"
+    ).join("");
+  }
+
+  function renderOps() {
+    const wrap = $(prefix + "-ops-wrap"), empty = $(prefix + "-ops-empty");
+    if (!state.ops.length) { wrap.hidden = true; empty.hidden = false; return; }
+    wrap.hidden = false; empty.hidden = true;
+    $(prefix + "-ops-body").innerHTML = state.ops.slice().reverse().map((o) =>
+      "<tr><td>" + dateTimeOf(o.ts) + '</td><td><span class="badge ' + actionClass(o.action) + '">' + actionLabel(o.action) + "</span></td></tr>"
+    ).join("");
+  }
+
+  function renderAll() { renderStatus(); renderSessions(); renderOps(); }
+
+  function onEvent(msg) {
+    if (msg.type === "hb") {
+      state.online = true;
+      state.lastSeen = msg.data.ts || (Date.now() / 1000);
+      renderStatus();
+    } else if (msg.type === "op") {
+      state.ops.push(msg.data);
+      if (state.ops.length > 50) state.ops.shift();
+      renderOps();
+    } else if (msg.type === "offline") {
+      state.online = false;
+      renderStatus();
+      fetch("/api/state").then((r) => r.json()).then((snap) => applySnapshot(snap[prefix === "g01" ? "garage01" : "garage02"] || {})).catch(() => {});
+    }
+  }
+
+  return { applySnapshot, onEvent, renderStatus };
+}
+
+const G01 = makeDevice("g01");
+const G02 = makeDevice("g02");
+
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = (evt) => {
+    let msg;
+    try { msg = JSON.parse(evt.data); } catch (e) { return; }
+
+    if (msg.type === "snapshot") {
+      G01.applySnapshot(msg.garage01 || {});
+      G02.applySnapshot(msg.garage02 || {});
+      return;
+    }
+    if (msg.device === "garage01") G01.onEvent(msg);
+    else if (msg.device === "garage02") G02.onEvent(msg);
+  };
+  es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+}
+
+setInterval(() => { G01.renderStatus(); G02.renderStatus(); }, 1000);
+
+connect();
+</script>
+</body>
+</html>
