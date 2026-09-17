@@ -348,8 +348,8 @@ def load_blynk_tokens():
 
 def main():
     parser = argparse.ArgumentParser(description="車庫門裝置共用監控收集器")
-    parser.add_argument("--blynk-poll-interval", type=int, default=2,
-                        help="輪詢 Blynk Cloud API 的間隔秒數(2 支 API/次,兩個裝置一天約 17 萬次,遠低於 Blynk 免費額度 50 萬次/裝置/天)")
+    parser.add_argument("--blynk-poll-interval", type=int, default=10,
+                        help="輪詢 Blynk Cloud API 的間隔秒數(2 支 API/次,一天約 1.7 萬次/裝置,遠低於 Blynk 免費額度 50 萬次/裝置/天;10 秒內操作歷史緩衝區還吃得下 8 筆,夠用)")
     parser.add_argument("--port", type=int, default=8080, help="網頁埠")
     parser.add_argument("--bind", default="0.0.0.0", help="網頁監聽位址")
     args = parser.parse_args()

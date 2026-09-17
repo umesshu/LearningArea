@@ -81,15 +81,21 @@ sudo systemctl daemon-reload
 ## 參數
 
 ```bash
-python3 server.py --port 8080 --blynk-poll-interval 2 --bind 0.0.0.0
+python3 server.py --port 8080 --blynk-poll-interval 10 --bind 0.0.0.0
 ```
 
-`--blynk-poll-interval` 是打 Blynk Cloud API 的輪詢間隔秒數（預設 2 秒，每次輪詢
-打 2 支 API，兩台裝置合計一天約 17 萬次請求；免費額度是每裝置每天 50 萬次，還很
+`--blynk-poll-interval` 是打 Blynk Cloud API 的輪詢間隔秒數（預設 10 秒，每次輪詢
+打 2 支 API，兩台裝置合計一天約 17,280 次請求；免費額度是每裝置每天 50 萬次，還很
 寬裕）。**2026-09-17 起 V0 回報的是「最近 8 筆」歷史（逗號分隔、新的在前，例如
 `"12:close,11:open,10:close"`）而不是只回報最新一筆**，這裡的解析邏輯會把一次
 輪詢裡所有還沒處理過的 counter 都補回去，就算輪詢間隔內連續操作好幾次也不會漏
-記；縮短輪詢間隔則是為了讓補回去的時間戳記盡量貼近實際操作時間。
+記。
+
+⚠️ 這個補漏機制有上限：韌體歷史緩衝區只留最近 **8 筆**，同一個輪詢間隔內操作次數
+一旦超過 8 次，最舊的幾筆會被擠出緩衝區、來不及被讀到就永久遺失（曾一度把輪詢間
+隔縮到 2 秒想降低這個風險，後來評估「10 秒內操作 8 次」已經非常夠用，改回 10
+秒)。真的需要應付更高頻率操作，加大兩份韌體裡的 `OP_HISTORY_SIZE` /
+`BLYNK_OP_HISTORY_SIZE` 即可，Blynk 的 String 欄位空間很寬裕，不是瓶頸。
 
 ## 儀表板內容
 
