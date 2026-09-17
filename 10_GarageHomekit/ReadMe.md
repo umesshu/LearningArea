@@ -78,8 +78,24 @@ arduino-cli monitor -p /dev/ttyUSB0 -c baudrate=115200
 **正式的監控資料來源改成輪詢 Blynk Cloud**:韌體另外連一個 Blynk Device(純粹回報用,
 `secrets.h` 裡的 `BLYNK_AUTH_TOKEN`,**跟控制邏輯完全獨立**——不呼叫 `Blynk.begin()`,
 不會因為 Blynk 連不上就重開機或延誤 HomeKit),每次開/關/暫停動作完成後把
-`"動作:計數器"` 寫進 Blynk 的 V0(String)腳位。樹莓派輪詢 `isHardwareConnected` 判斷
-連線狀態、輪詢 V0 判斷有沒有新操作,這樣不管樹莓派實際在哪個網路都收得到。
+最近幾筆歷史(`"counter:action:operator"`,逗號分隔、新的在前)寫進 Blynk 的
+V0(String)腳位。樹莓派輪詢 `isHardwareConnected` 判斷連線狀態、輪詢 V0 判斷
+有沒有新操作,這樣不管樹莓派實際在哪個網路都收得到。
+
+**2026-09-17 加上操作者資訊**:HomeKit 的實際控制是 Apple 協定,沒有 URL 可以夾帶
+操作者資訊,所以用「打標籤」的方式繞過去——iOS 捷徑在送出 HomeKit 控制指令**之前**,
+先加一步「取得裝置詳細資訊」拿到裝置名稱,多打一支請求把名稱寫進同一個 V0:
+
+```
+https://blynk.cloud/external/api/update?token={GARAGE-01的Token}&V0={裝置名稱}
+```
+
+韌體收到後只是記住這個字串,**不會觸發任何動作**;等 HomeKit 真的觸發、韌體照舊
+呼叫 `reportOpToBlynk()` 回報時,才把剛記住的操作者一起附上去,用完立刻清空。捷徑
+裡這支「標記用」請求要排在「透過 Home App 控制家庭」動作**之前**且等它跑完
+(Shortcuts 的「取得URL內容」預設就是同步等待),確保標籤能在動作發生前送達;
+沒有經過捷徑的操作(例如直接對 Siri 說「打開車庫」)就不會有操作者這欄,監控頁
+面上顯示「—」。
 
 儀表板跟 `12_GarageBlynk` 合併成同一個共用的 `../13_pi_monitor/`(同一個 process、
 同一個網頁埠 8080),不再各自獨立。安裝、Tailscale 遠端存取、安全性要點都在

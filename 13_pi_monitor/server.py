@@ -126,9 +126,9 @@ class DeviceHub:
         if went_offline:
             BUS.broadcast({"type": "offline", "device": self.device_key})
 
-    def add_op(self, action):
+    def add_op(self, action, operator=""):
         now = time.time()
-        entry = {"ts": now, "action": action}
+        entry = {"ts": now, "action": action, "operator": operator}
         with self.lock:
             self.ops.append(entry)
         BUS.broadcast({"type": "op", "device": self.device_key, "data": entry})
@@ -178,7 +178,11 @@ def combined_snapshot():
 # 輪詢 Blynk Cloud:兩台裝置共用同一套邏輯,只是 token/hub 不同
 # ============================================================
 BLYNK_API_BASE = "https://blynk.cloud/external/api"
-BLYNK_OP_RE = re.compile(r"^(open|close|pause):(\d+)$")
+# 韌體端 V0 回報的是「最近幾筆」歷史,逗號分隔、新的在前,例如:
+#   "12:close:iPhone15,11:open:,10:close:iPad"
+# 操作者欄位是後來加的,用 (?:...)? 包成可選,舊格式("12:close",沒有操作者)
+# 一樣解得出來,只是 operator 抓到空字串。用 findall 抓出全部,不要求整串只有一筆。
+BLYNK_OP_RE = re.compile(r"(\d+):(open|close|pause)(?::([^,]*))?")
 
 
 def _blynk_api_get(path_and_query, timeout=6):
@@ -206,10 +210,17 @@ def _parse_blynk_get_value(raw):
 def blynk_poll_loop(hub, token, interval_s):
     """定時輪詢 Blynk Cloud:isHardwareConnected 判斷連線狀態,V0 判斷有沒有新操作。
 
-    V0 是韌體的單一 String 腳位:外部寫入 "open"/"close"(/"pause") 觸發,
-    裝置執行完動作後寫回 "動作:N"(N 遞增計數器),這裡只解析裝置寫回的格式。
+    V0 是韌體的單一 String 腳位,裝置端維護「最近幾筆」歷史(逗號分隔、新的在
+    前,例如 "12:close:iPhone15,11:open:,10:close:iPad")而不是只回報最新
+    一筆,這樣就算輪詢間隔內連續操作好幾次,一次輪詢也能把中間漏掉的全部補
+    回來,不會漏記。第三個欄位(操作者)是選填,舊格式沒有這欄也解得出來。
+
+    做法:每次輪詢把整串解析成 (counter, action, operator) 列表,只處理
+    counter 比上次看過的最大值還大的那些,依 counter 由小到大依序記錄,
+    確保操作順序正確。若新一批的最大 counter 反而比上次還小(裝置重開機、
+    counter 歸零重算),视為全部都是新事件,重新從這批開始追蹤。
     """
-    last_op_counter = None   # 記住上次看到的計數器,數字變了才算一筆新操作
+    last_op_counter = None   # 記住上次看過、已經處理過的最大 counter
 
     while True:
         connected_raw = _blynk_api_get(f"isHardwareConnected?token={token}")
@@ -220,13 +231,22 @@ def blynk_poll_loop(hub, token, interval_s):
                 v0_raw = _blynk_api_get(f"get?token={token}&v0")
                 if v0_raw is not None:
                     value = _parse_blynk_get_value(v0_raw)
-                    m = BLYNK_OP_RE.match(value)
-                    if m:
-                        action, counter_str = m.group(1), m.group(2)
-                        counter = int(counter_str)
-                        if last_op_counter is not None and counter != last_op_counter:
-                            hub.add_op(action)
-                        last_op_counter = counter
+                    entries = sorted(
+                        ((int(c), a, op or "") for c, a, op in BLYNK_OP_RE.findall(value)),
+                        key=lambda triple: triple[0],
+                    )
+                    if entries:
+                        newest_counter = entries[-1][0]
+                        if last_op_counter is None:
+                            pass   # 開機第一次看到,只記基準,不補報「開機前」的歷史
+                        elif newest_counter < last_op_counter:
+                            for counter, action, operator in entries:   # 裝置重開機,counter 歸零重算
+                                hub.add_op(action, operator)
+                        else:
+                            for counter, action, operator in entries:
+                                if counter > last_op_counter:
+                                    hub.add_op(action, operator)
+                        last_op_counter = newest_counter
             else:
                 hub.mark_disconnected()
 
@@ -328,8 +348,8 @@ def load_blynk_tokens():
 
 def main():
     parser = argparse.ArgumentParser(description="車庫門裝置共用監控收集器")
-    parser.add_argument("--blynk-poll-interval", type=int, default=10,
-                        help="輪詢 Blynk Cloud API 的間隔秒數")
+    parser.add_argument("--blynk-poll-interval", type=int, default=2,
+                        help="輪詢 Blynk Cloud API 的間隔秒數(2 支 API/次,兩個裝置一天約 17 萬次,遠低於 Blynk 免費額度 50 萬次/裝置/天)")
     parser.add_argument("--port", type=int, default=8080, help="網頁埠")
     parser.add_argument("--bind", default="0.0.0.0", help="網頁監聽位址")
     args = parser.parse_args()

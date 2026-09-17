@@ -18,9 +18,62 @@
 #include <BlynkSimpleEsp8266.h>
 unsigned long blynkOpCounter = 0;   // 每次開/關/暫停動作遞增
 
+// 【2026-09-17 修正】V0 原本只回報「最新一筆」("open:N"),樹莓派輪詢間隔內
+// 連續操作兩次以上,中間那幾筆會被直接覆寫掉、Pi 端永遠看不到。現在改成把
+// 「最近 BLYNK_OP_HISTORY_SIZE 筆」一起塞進同一個 String,格式
+// "counter:action:operator" 用逗號分隔、新的在前,例如
+// "12:close:iPhone15,11:open:,10:close:iPad"。跟 12_GarageBlynk 用同一套格式,
+// 樹莓派端(13_pi_monitor/server.py)共用同一段解析邏輯。
+#define BLYNK_OP_HISTORY_SIZE 8
+unsigned long blynkOpHistoryCounter[BLYNK_OP_HISTORY_SIZE];
+String blynkOpHistoryAction[BLYNK_OP_HISTORY_SIZE];
+String blynkOpHistoryOperator[BLYNK_OP_HISTORY_SIZE];
+int blynkOpHistoryCount = 0;
+
+// 【2026-09-17 加上操作者資訊】GARAGE-01 的實際觸發永遠走 HomeKit(不是 HTTP),
+// 所以沒辦法比照 GARAGE-02 直接從觸發請求裡拿操作者。做法是:iOS 捷徑在送出
+// HomeKit 控制指令「之前」,先多打一支 HTTP 請求把操作者名稱寫進同一個 V0
+// (純打標籤用,格式就是裝置名稱本身,不含動作),韌體收到後只是記住、不會觸發
+// 任何繼電器動作;等 HomeKit 真的觸發、reportOpToBlynk() 被呼叫時,把剛記住的
+// 操作者一起附上去,用完立刻清空,避免之後沒帶標籤的操作(例如直接語音 Siri
+// 控制、沒經過捷徑)被誤植成上一次的操作者。
+String pendingOperator = "";
+
+String sanitizeOperator(String s) {
+  s.replace(",", " ");
+  s.replace(":", " ");
+  s.trim();
+  if (s.length() > 24) s = s.substring(0, 24);
+  return s;
+}
+
 void reportOpToBlynk(const char *action) {
   blynkOpCounter++;
-  Blynk.virtualWrite(V0, String(action) + ":" + String(blynkOpCounter));
+
+  int fillCount = min(blynkOpHistoryCount + 1, BLYNK_OP_HISTORY_SIZE);
+  for (int i = fillCount - 1; i > 0; i--) {
+    blynkOpHistoryCounter[i] = blynkOpHistoryCounter[i - 1];
+    blynkOpHistoryAction[i]  = blynkOpHistoryAction[i - 1];
+    blynkOpHistoryOperator[i] = blynkOpHistoryOperator[i - 1];
+  }
+  blynkOpHistoryCounter[0] = blynkOpCounter;
+  blynkOpHistoryAction[0]  = action;
+  blynkOpHistoryOperator[0] = pendingOperator;
+  blynkOpHistoryCount = fillCount;
+  pendingOperator = "";   // 用掉就清空,避免誤植到下一筆沒帶標籤的操作
+
+  String combined;
+  for (int i = 0; i < blynkOpHistoryCount; i++) {
+    if (i) combined += ",";
+    combined += String(blynkOpHistoryCounter[i]) + ":" + blynkOpHistoryAction[i] + ":" + blynkOpHistoryOperator[i];
+  }
+  Blynk.virtualWrite(V0, combined);
+}
+
+// 外部(iOS 捷徑)在觸發 HomeKit 前,先把操作者名稱寫進 V0 打標籤用。
+// 裝置自己 virtualWrite() 不會觸發自己的 BLYNK_WRITE,不會跟上面的回報互相干擾。
+BLYNK_WRITE(V0) {
+  pendingOperator = sanitizeOperator(param.asStr());
 }
 
 const char *ssid     = WIFI_SSID;       // 與 iPhone/HomePod 同網段(192.168.0.x)

@@ -211,11 +211,11 @@ footer {
 
     <div class="card-section">
       <div class="card-section-head">開/關/暫停操作記錄(最近 50 筆)</div>
-      <div class="hint">觸發走 HomeKit(不經過樹莓派),記不到來源裝置/IP,只記錄時間與動作。</div>
+      <div class="hint">觸發走 HomeKit(不經過樹莓派),記不到來源裝置/IP;操作者是 iOS 捷徑額外標記的,沒經過捷徑(例如直接語音 Siri)就沒有這欄。</div>
       <div id="g01-ops-empty" class="table-empty">目前還沒有操作紀錄。</div>
       <div class="table-scroll" id="g01-ops-wrap" hidden>
         <table>
-          <thead><tr><th>時間</th><th>動作</th></tr></thead>
+          <thead><tr><th>時間</th><th>動作</th><th>操作者</th></tr></thead>
           <tbody id="g01-ops-body"></tbody>
         </table>
       </div>
@@ -246,11 +246,11 @@ footer {
 
     <div class="card-section">
       <div class="card-section-head">開/關操作記錄(最近 50 筆)</div>
-      <div class="hint">觸發是手機捷徑直接呼叫 Blynk Cloud(不經過樹莓派),記不到來源裝置/IP,只記錄時間與動作。</div>
+      <div class="hint">觸發是手機捷徑直接呼叫 Blynk Cloud(不經過樹莓派),記不到來源 IP;操作者是捷徑額外帶的裝置名稱。</div>
       <div id="g02-ops-empty" class="table-empty">目前還沒有操作紀錄。</div>
       <div class="table-scroll" id="g02-ops-wrap" hidden>
         <table>
-          <thead><tr><th>時間</th><th>動作</th></tr></thead>
+          <thead><tr><th>時間</th><th>動作</th><th>操作者</th></tr></thead>
           <tbody id="g02-ops-body"></tbody>
         </table>
       </div>
@@ -269,6 +269,17 @@ function dateTimeOf(ts) {
   if (!ts) return "—";
   return new Date(ts * 1000).toLocaleString("zh-TW", { hour12: false });
 }
+function relativeTimeOf(ts) {
+  if (!ts) return "";
+  const sec = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (sec < 60) return sec + "秒前";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + "分前";
+  const hr = Math.floor(min / 60), remMin = min % 60;
+  if (hr < 24) return hr + "小時" + (remMin ? remMin + "分" : "") + "前";
+  const day = Math.floor(hr / 24);
+  return day + "天前";
+}
 function durationOf(sec) {
   sec = Math.max(0, Math.floor(sec));
   const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
@@ -281,6 +292,11 @@ function actionLabel(action) {
   if (action === "close") return "關門";
   if (action === "pause") return "暫停";
   return action;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
 }
 function actionClass(action) {
   if (action === "open") return "open";
@@ -329,7 +345,7 @@ function makeDevice(prefix) {
     if (!state.ops.length) { wrap.hidden = true; empty.hidden = false; return; }
     wrap.hidden = false; empty.hidden = true;
     $(prefix + "-ops-body").innerHTML = state.ops.slice().reverse().map((o) =>
-      "<tr><td>" + dateTimeOf(o.ts) + '</td><td><span class="badge ' + actionClass(o.action) + '">' + actionLabel(o.action) + "</span></td></tr>"
+      "<tr><td>" + dateTimeOf(o.ts) + " (" + relativeTimeOf(o.ts) + ')</td><td><span class="badge ' + actionClass(o.action) + '">' + actionLabel(o.action) + "</span></td><td>" + (o.operator ? escapeHtml(o.operator) : "—") + "</td></tr>"
     ).join("");
   }
 
@@ -351,7 +367,7 @@ function makeDevice(prefix) {
     }
   }
 
-  return { applySnapshot, onEvent, renderStatus };
+  return { applySnapshot, onEvent, renderStatus, renderOps };
 }
 
 const G01 = makeDevice("g01");
@@ -374,7 +390,7 @@ function connect() {
   es.onerror = () => { es.close(); setTimeout(connect, 2000); };
 }
 
-setInterval(() => { G01.renderStatus(); G02.renderStatus(); }, 1000);
+setInterval(() => { G01.renderStatus(); G02.renderStatus(); G01.renderOps(); G02.renderOps(); }, 1000);
 
 connect();
 </script>

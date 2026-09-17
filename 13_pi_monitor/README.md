@@ -81,11 +81,15 @@ sudo systemctl daemon-reload
 ## 參數
 
 ```bash
-python3 server.py --port 8080 --blynk-poll-interval 10 --bind 0.0.0.0
+python3 server.py --port 8080 --blynk-poll-interval 2 --bind 0.0.0.0
 ```
 
-`--blynk-poll-interval` 是打 Blynk Cloud API 的輪詢間隔秒數（預設 10 秒；免費額度
-是每裝置每天 50 萬次請求，10 秒一次一天約 8,640 次，兩台裝置合計都還很寬裕）。
+`--blynk-poll-interval` 是打 Blynk Cloud API 的輪詢間隔秒數（預設 2 秒，每次輪詢
+打 2 支 API，兩台裝置合計一天約 17 萬次請求；免費額度是每裝置每天 50 萬次，還很
+寬裕）。**2026-09-17 起 V0 回報的是「最近 8 筆」歷史（逗號分隔、新的在前，例如
+`"12:close,11:open,10:close"`）而不是只回報最新一筆**，這裡的解析邏輯會把一次
+輪詢裡所有還沒處理過的 counter 都補回去，就算輪詢間隔內連續操作好幾次也不會漏
+記；縮短輪詢間隔則是為了讓補回去的時間戳記盡量貼近實際操作時間。
 
 ## 儀表板內容
 
